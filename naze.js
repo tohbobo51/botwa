@@ -681,7 +681,7 @@ const naze = async (naze, m, msg, store) => {
 			const bodyLower = bodyTrim.toLowerCase();
 
 			// Trigger kata kunci "daftar"
-			if (bodyLower === 'daftar' && !isCmd) {
+			if (bodyLower === 'daftar' && !m.prefix) {
 				tournament[m.sender] = { state: 'waiting_choice', pilihan: null, image: null, name: null, time: Date.now() };
 				if (global.tournamentTimers[m.sender]) clearTimeout(global.tournamentTimers[m.sender]);
 				await m.reply('Halo! Pilih slot turnamen kamu:\n\n*11* - Slot 11\n*33* - Slot 33\n*44* - Slot 44\n\nBalas dengan angka pilihanmu.');
@@ -689,7 +689,7 @@ const naze = async (naze, m, msg, store) => {
 			}
 
 			// State: menunggu pilihan 11/33/44
-			if (tournament[m.sender]?.state === 'waiting_choice' && !isCmd) {
+			if (tournament[m.sender]?.state === 'waiting_choice') {
 				if (/^(11|33|44)$/.test(bodyTrim)) {
 					const pilihan = bodyTrim;
 					tournament[m.sender].state = 'waiting_payment';
@@ -718,7 +718,7 @@ const naze = async (naze, m, msg, store) => {
 			}
 
 			// State: menunggu bukti transfer
-			if (tournament[m.sender]?.state === 'waiting_payment' && !isCmd) {
+			if (tournament[m.sender]?.state === 'waiting_payment') {
 				const sesi = tournament[m.sender];
 
 				// Terima gambar (bukti transfer)

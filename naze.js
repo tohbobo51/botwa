@@ -677,8 +677,10 @@ const naze = async (naze, m, msg, store) => {
 			}
 		}
 		
-		// ACC/TOLAK handler di Grup Monitor
-		if (m.isGroup && m.chat === set.monitorGroup && m.quoted && monitorMap[m.quoted.id]) {
+		// ACC/TOLAK handler - di Grup Monitor ATAU PM owner
+		const isAccTolakPM = !m.isGroup && isCreator && m.quoted && monitorMap[m.quoted.id];
+		const isAccTolakGroup = m.isGroup && m.chat === set.monitorGroup && m.quoted && monitorMap[m.quoted.id];
+		if (isAccTolakGroup || isAccTolakPM) {
 			const teks = (body || '').trim().toLowerCase();
 			if (/^(acc|tolak)$/i.test(teks)) {
 				const data = monitorMap[m.quoted.id];

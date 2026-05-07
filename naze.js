@@ -92,6 +92,8 @@ const naze = async (naze, m, msg, store) => {
 	let tebakbendera = db.game.tebakbendera
 	if (!db.game.tournament) db.game.tournament = {};
 	let tournament = db.game.tournament;
+	if (!db.game.monitorMap) db.game.monitorMap = {};
+	let monitorMap = db.game.monitorMap;
 	if (!global.tournamentTimers) global.tournamentTimers = {};
 	
 	const ownerNumber = set.owner = [...new Set([...global.owner, botNumber.split('@')[0], ...set?.owner || []])];
@@ -675,6 +677,25 @@ const naze = async (naze, m, msg, store) => {
 			}
 		}
 		
+		// ACC/TOLAK handler di Grup Monitor
+		if (m.isGroup && m.chat === set.monitorGroup && m.quoted && monitorMap[m.quoted.id]) {
+			const teks = (body || '').trim().toLowerCase();
+			if (/^(acc|tolak)$/i.test(teks)) {
+				const data = monitorMap[m.quoted.id];
+				const userJid = data.senderJid;
+				const isAcc = /^acc$/i.test(teks);
+				if (isAcc) {
+					await naze.sendMessage(userJid, { text: `✅ *Pendaftaran Turnamen Diterima!*\nSlot: *${data.pilihan}*\nA.n: *${data.name}*\n\nSelamat bergabung! Pantau info selanjutnya dari admin.` });
+					await m.reply(`✅ Pendaftaran @${userJid.split('@')[0]} berhasil di-ACC.\nUser sudah diberitahu.`, { mentions: [userJid] });
+				} else {
+					await naze.sendMessage(userJid, { text: `❌ *Pendaftaran Turnamen Ditolak*\nSlot: *${data.pilihan}*\n\nBukti transfer tidak valid atau bermasalah.\nSilahkan ketik *daftar* lagi dan kirim bukti yang benar.` });
+					await m.reply(`❌ Pendaftaran @${userJid.split('@')[0]} ditolak.\nUser sudah diberitahu.`, { mentions: [userJid] });
+				}
+				delete monitorMap[m.quoted.id];
+				return;
+			}
+		}
+
 		// Turnamen Pendaftaran (PM only)
 		if (!m.isGroup && !m.key.fromMe && m.key.remoteJid !== 'status@broadcast') {
 			const bodyTrim = (body || '').trim();
@@ -682,7 +703,17 @@ const naze = async (naze, m, msg, store) => {
 
 			// Trigger kata kunci "daftar"
 			if (bodyLower === 'daftar' && !m.prefix) {
-				tournament[m.sender] = { state: 'waiting_choice', pilihan: null, image: null, name: null, time: Date.now() };
+				// [3] Anti duplikat - cek apakah sudah ada sesi aktif
+				if (tournament[m.sender]) {
+					const state = tournament[m.sender].state;
+					if (state === 'waiting_choice') {
+						await m.reply('Kamu sudah dalam proses pendaftaran.\nSilahkan pilih slot: *11*, *33*, atau *44*');
+					} else if (state === 'waiting_payment') {
+						await m.reply('Kamu sudah dalam proses pembayaran.\nKirimkan screenshot bukti transfer dan Atas Nama kamu.\n\nJika ingin mulai ulang, tunggu 5 menit atau hubungi admin.');
+					}
+					return;
+				}
+				tournament[m.sender] = { state: 'waiting_choice', pilihan: null, imagePath: null, name: null, time: Date.now() };
 				if (global.tournamentTimers[m.sender]) clearTimeout(global.tournamentTimers[m.sender]);
 				await m.reply('Halo! Pilih slot turnamen kamu:\n\n*11* - Slot 11\n*33* - Slot 33\n*44* - Slot 44\n\nBalas dengan angka pilihanmu.');
 				return;
@@ -694,7 +725,7 @@ const naze = async (naze, m, msg, store) => {
 					const pilihan = bodyTrim;
 					tournament[m.sender].state = 'waiting_payment';
 					tournament[m.sender].pilihan = pilihan;
-					tournament[m.sender].image = null;
+					tournament[m.sender].imagePath = null;
 					tournament[m.sender].name = null;
 					tournament[m.sender].time = Date.now();
 
@@ -706,6 +737,9 @@ const naze = async (naze, m, msg, store) => {
 					if (global.tournamentTimers[m.sender]) clearTimeout(global.tournamentTimers[m.sender]);
 					global.tournamentTimers[m.sender] = setTimeout(async () => {
 						if (tournament[m.sender]) {
+							// [1] Bersihkan file temp jika ada
+							const tmpPath = tournament[m.sender].imagePath;
+							if (tmpPath && fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
 							delete tournament[m.sender];
 							await naze.sendMessage(m.chat, { text: 'Waktu habis! Silahkan ketik *daftar* lagi.' });
 						}
@@ -721,9 +755,14 @@ const naze = async (naze, m, msg, store) => {
 			if (tournament[m.sender]?.state === 'waiting_payment') {
 				const sesi = tournament[m.sender];
 
-				// Terima gambar (bukti transfer)
+				// [1] Terima gambar - simpan ke file temp, bukan buffer
 				if (m.isMedia && m.mime && /image/.test(m.mime)) {
-					sesi.image = await naze.downloadMediaMessage(m);
+					const tmpDir = path.join(__dirname, 'database/temp');
+					if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+					const tmpPath = path.join(tmpDir, `tournament_${m.sender.split('@')[0]}.jpg`);
+					const imgBuf = await naze.downloadMediaMessage(m);
+					fs.writeFileSync(tmpPath, imgBuf);
+					sesi.imagePath = tmpPath;
 					const cap = (m.msg?.caption || '').trim();
 					if (cap && /^(a\.?n\.?\s*\w+|\w{2,30})$/i.test(cap)) sesi.name = cap;
 				}
@@ -734,30 +773,61 @@ const naze = async (naze, m, msg, store) => {
 				}
 
 				// Jika keduanya sudah diterima → forward ke grup monitor
-				if (sesi.image && sesi.name) {
+				if (sesi.imagePath && sesi.name) {
 					if (global.tournamentTimers[m.sender]) clearTimeout(global.tournamentTimers[m.sender]);
 					delete global.tournamentTimers[m.sender];
+
 					const monitorJid = set.monitorGroup;
 					if (monitorJid) {
-						await naze.sendMessage(monitorJid, {
-							image: sesi.image,
-							caption: `*Bukti Transfer Turnamen*\nDari: @${m.sender.split('@')[0]}\nSlot: *${sesi.pilihan}*\nA.n: *${sesi.name}*`,
-							mentions: [m.sender]
-						});
+						// Baca file temp lalu kirim
+						const imgBuf = fs.existsSync(sesi.imagePath) ? fs.readFileSync(sesi.imagePath) : null;
+						if (imgBuf) {
+							const sent = await naze.sendMessage(monitorJid, {
+								image: imgBuf,
+								caption: `*📋 Bukti Transfer Turnamen*\nDari: @${m.sender.split('@')[0]}\nNo: ${m.sender.split('@')[0]}\nSlot: *${sesi.pilihan}*\nA.n: *${sesi.name}*\n\n_Reply pesan ini dengan *acc* atau *tolak*_`,
+								mentions: [m.sender]
+							});
+							// [7] Simpan mapping messageId → data pendaftar untuk ACC/TOLAK
+							if (sent?.key?.id) {
+								monitorMap[sent.key.id] = { senderJid: m.sender, pilihan: sesi.pilihan, name: sesi.name };
+							}
+							// Hapus file temp
+							if (fs.existsSync(sesi.imagePath)) fs.unlinkSync(sesi.imagePath);
+						}
+					} else {
+						// [2] Monitor group belum diset - kirim langsung ke owner
+						for (const ownerNum of ownerNumber) {
+							const ownerJid = ownerNum.includes('@') ? ownerNum : ownerNum + '@s.whatsapp.net';
+							try {
+								const imgBuf = fs.existsSync(sesi.imagePath) ? fs.readFileSync(sesi.imagePath) : null;
+								if (imgBuf) {
+									const sent = await naze.sendMessage(ownerJid, {
+										image: imgBuf,
+										caption: `*📋 Bukti Transfer Turnamen*\n⚠️ _Monitor group belum diset! Gunakan .monitor di grup_\n\nDari: @${m.sender.split('@')[0]}\nNo: ${m.sender.split('@')[0]}\nSlot: *${sesi.pilihan}*\nA.n: *${sesi.name}*\n\n_Reply pesan ini dengan *acc* atau *tolak*_`,
+										mentions: [m.sender]
+									});
+									if (sent?.key?.id) {
+										monitorMap[sent.key.id] = { senderJid: m.sender, pilihan: sesi.pilihan, name: sesi.name };
+									}
+								}
+							} catch (e) {}
+						}
+						if (fs.existsSync(sesi.imagePath)) fs.unlinkSync(sesi.imagePath);
 					}
+
 					delete tournament[m.sender];
-					await m.reply('Bukti transfer diterima! Pendaftaran kamu sedang diproses.');
+					await m.reply('✅ Bukti transfer diterima! Pendaftaran kamu sedang diverifikasi oleh admin.');
 					return;
 				}
 
 				// Hanya gambar, minta nama
-				if (sesi.image && !sesi.name) {
+				if (sesi.imagePath && !sesi.name) {
 					await m.reply('Bukti diterima! Sekarang kirimkan *Atas Nama* kamu.\nContoh: *A.n Budi* atau *Budi*');
 					return;
 				}
 
 				// Hanya nama, minta gambar
-				if (sesi.name && !sesi.image) {
+				if (sesi.name && !sesi.imagePath) {
 					await m.reply('Nama diterima. Sekarang kirimkan *screenshot bukti transfer* kamu.');
 					return;
 				}

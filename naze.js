@@ -94,6 +94,11 @@ const naze = async (naze, m, msg, store) => {
 	let tournament = db.game.tournament;
 	if (!db.game.monitorMap) db.game.monitorMap = {};
 	let monitorMap = db.game.monitorMap;
+	if (!db.game.pendingApply) db.game.pendingApply = {};
+	let pendingApply = db.game.pendingApply;
+	if (!db.game.applySession) db.game.applySession = {};
+	let applySession = db.game.applySession;
+	if (!set.tournamentGroups) set.tournamentGroups = [];
 	if (!global.tournamentTimers) global.tournamentTimers = {};
 	
 	const ownerNumber = set.owner = [...new Set([...global.owner, botNumber.split('@')[0], ...set?.owner || []])];
@@ -284,7 +289,7 @@ const naze = async (naze, m, msg, store) => {
 		if (db.users[m.sender]?.ban && !isCreator) return
 		
 		// Filter Set Api Key
-		if (cases.includes(command) && isCmd && (command !== 'setapikey' && command !== 'monitor')) {
+		if (cases.includes(command) && isCmd && (command !== 'setapikey' && command !== 'monitor' && command !== 'addgrub')) {
 			const currentKey = global.APIKeys[global.APIs.naze];
 			if (currentKey === 'YOUR_API_KEY' || !currentKey.startsWith('nz-')) {
 				return m.reply('Silahkan Ganti Apikey yang ada\ndi File settings.js dengan apikey mu\nAgar semua fitur bisa digunakan dengan normal\n\nAmbil Key di : https://naze.biz.id/profile\nKemudian Gunakan Perintah\n.setapikey key_nya');
@@ -688,12 +693,96 @@ const naze = async (naze, m, msg, store) => {
 				const isAcc = /^acc$/i.test(teks);
 				if (isAcc) {
 					await naze.sendMessage(userJid, { text: `✅ *Pendaftaran Turnamen Diterima!*\nSlot: *${data.pilihan}*\nA.n: *${data.name}*\n\nSelamat bergabung! Pantau info selanjutnya dari admin.` });
-					await m.reply(`✅ Pendaftaran @${userJid.split('@')[0]} berhasil di-ACC.\nUser sudah diberitahu.`, { mentions: [userJid] });
+					const sentAcc = await naze.sendMessage(m.chat, {
+						text: `✅ Pendaftaran @${userJid.split('@')[0]} berhasil di-ACC.\nSlot: *${data.pilihan}* | A.n: *${data.name}*\n\nBalas pesan ini dengan *apply* untuk memasukkan ke grup.`,
+						mentions: [userJid]
+					}, { quoted: m });
+					if (sentAcc?.key?.id) {
+						pendingApply[sentAcc.key.id] = { senderJid: userJid, pilihan: data.pilihan, name: data.name };
+					}
 				} else {
 					await naze.sendMessage(userJid, { text: `❌ *Pendaftaran Turnamen Ditolak*\nSlot: *${data.pilihan}*\n\nBukti transfer tidak valid atau bermasalah.\nSilahkan ketik *daftar* lagi dan kirim bukti yang benar.` });
 					await m.reply(`❌ Pendaftaran @${userJid.split('@')[0]} ditolak.\nUser sudah diberitahu.`, { mentions: [userJid] });
 				}
 				delete monitorMap[m.quoted.id];
+				return;
+			}
+		}
+
+
+		// APPLY handler - owner reply "apply" ke pesan ACC
+		const isApplyReply = isCreator && m.quoted && pendingApply[m.quoted.id] && (body || '').trim().toLowerCase() === 'apply';
+		if (isApplyReply) {
+			const applyData = pendingApply[m.quoted.id];
+			const slot = applyData.pilihan;
+			const grupsSlot = set.tournamentGroups.filter(g => g.slot === slot);
+			if (grupsSlot.length === 0) {
+				await m.reply(`Belum ada grup slot *${slot}* yang terdaftar.
+Tambahkan dulu dengan: *.addgrub [nama] ${slot}* (jalankan di dalam grup)`);
+				return;
+			}
+			let listTeks = `*Pilih Grup untuk Slot ${slot}:*
+Pendaftar: @${applyData.senderJid.split('@')[0]} (A.n: ${applyData.name})
+
+`;
+			grupsSlot.forEach((g, i) => {
+				const isFull = g.count >= 4;
+				listTeks += `*${i + 1}.* ${g.name} — ${g.count}/4${isFull ? ' *(FULL)*' : ''}
+`;
+			});
+			listTeks += '
+Balas dengan *nomor* pilihanmu.';
+			const sentList = await m.reply(listTeks, { mentions: [applyData.senderJid] });
+			applySession[m.sender] = {
+				senderJid: applyData.senderJid,
+				pilihan: slot,
+				name: applyData.name,
+				grupsSlot,
+				chat: m.chat,
+				quotedMsgId: m.quoted.id
+			};
+			delete pendingApply[m.quoted.id];
+			return;
+		}
+
+		// NUMBER SELECTION handler - owner pilih nomor grup
+		if (isCreator && applySession[m.sender]) {
+			const sesiApply = applySession[m.sender];
+			const num = parseInt((body || '').trim());
+			if (!isNaN(num) && num >= 1 && num <= sesiApply.grupsSlot.length) {
+				const pilihanGrup = sesiApply.grupsSlot[num - 1];
+				// Cari di tournamentGroups asli
+				const grupIdx = set.tournamentGroups.findIndex(g => g.jid === pilihanGrup.jid);
+				if (grupIdx === -1) {
+					await m.reply('Grup tidak ditemukan. Silahkan apply ulang.');
+					delete applySession[m.sender];
+					return;
+				}
+				const grup = set.tournamentGroups[grupIdx];
+				if (grup.count >= 4) {
+					await m.reply(`Grup *${grup.name}* sudah FULL (4/4)!
+Silahkan ketik *apply* ulang dan pilih grup lain.`);
+					delete applySession[m.sender];
+					return;
+				}
+				try {
+					await naze.groupParticipantsUpdate(grup.jid, [sesiApply.senderJid], 'add');
+					set.tournamentGroups[grupIdx].count += 1;
+					await m.reply(`✅ @${sesiApply.senderJid.split('@')[0]} berhasil dimasukkan ke grup *${grup.name}*!
+Slot: *${sesiApply.pilihan}* | Peserta: ${grup.count + 1}/4`, { mentions: [sesiApply.senderJid] });
+					await naze.sendMessage(sesiApply.senderJid, { text: `✅ Kamu sudah berhasil dimasukkan ke grup turnamen!
+Grup: *${grup.name}*
+Slot: *${sesiApply.pilihan}*
+
+Cek grup WhatsApp kamu!` });
+				} catch (e) {
+					await m.reply(`Gagal memasukkan user ke grup. Pastikan bot adalah admin di grup *${grup.name}*.
+Error: ${e?.message || e}`);
+				}
+				delete applySession[m.sender];
+				return;
+			} else if (!isNaN(num)) {
+				await m.reply(`Nomor tidak valid! Pilih antara 1 sampai ${sesiApply.grupsSlot.length}`);
 				return;
 			}
 		}
@@ -891,6 +980,22 @@ const naze = async (naze, m, msg, store) => {
 			}
 			break
 			
+			// Daftarkan Grup Turnamen
+			case 'addgrub': {
+				if (!isCreator) return m.reply(global.mess.owner);
+				if (!m.isGroup) return m.reply('Jalankan perintah ini di dalam grup yang ingin didaftarkan!\nContoh: *.addgrub NamaGrup 11*');
+				if (!args[0]) return m.reply('Format: *.addgrub [nama] [slot]*\nContoh: .addgrub GrupA 11\nSlot: 11, 33, 44');
+				const grubSlot = args[args.length - 1];
+				if (!/^(11|33|44)$/.test(grubSlot)) return m.reply('Slot tidak valid! Gunakan: *11*, *33*, atau *44*');
+				const grubNama = args.length > 1 ? args.slice(0, -1).join(' ') : args[0];
+				if (!set.tournamentGroups) set.tournamentGroups = [];
+				const existing = set.tournamentGroups.find(g => g.jid === m.chat);
+				if (existing) return m.reply(`Grup ini sudah terdaftar sebagai *${existing.name}* (Slot ${existing.slot})\nJumlah peserta: ${existing.count}/4`);
+				set.tournamentGroups.push({ jid: m.chat, name: grubNama, slot: grubSlot, count: 0 });
+				await m.reply(`✅ Grup *${grubNama}* berhasil didaftarkan untuk slot *${grubSlot}*!\nKapasitas: 0/4 peserta`);
+			}
+			break
+
 			// Monitor Grup Turnamen
 			case 'monitor': {
 				if (!isCreator) return m.reply(global.mess.owner);

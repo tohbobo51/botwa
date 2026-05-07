@@ -90,6 +90,9 @@ const naze = async (naze, m, msg, store) => {
 	let tebaknegara = db.game.tebaknegara
 	let tebakgambar = db.game.tebakgambar
 	let tebakbendera = db.game.tebakbendera
+	if (!db.game.tournament) db.game.tournament = {};
+	let tournament = db.game.tournament;
+	if (!global.tournamentTimers) global.tournamentTimers = {};
 	
 	const ownerNumber = set.owner = [...new Set([...global.owner, botNumber.split('@')[0], ...set?.owner || []])];
 	
@@ -672,6 +675,97 @@ const naze = async (naze, m, msg, store) => {
 			}
 		}
 		
+		// Turnamen Pendaftaran (PM only)
+		if (!m.isGroup && !m.key.fromMe && m.key.remoteJid !== 'status@broadcast') {
+			const bodyTrim = (body || '').trim();
+			const bodyLower = bodyTrim.toLowerCase();
+
+			// Trigger kata kunci "daftar"
+			if (bodyLower === 'daftar' && !isCmd) {
+				tournament[m.sender] = { state: 'waiting_choice', pilihan: null, image: null, name: null, time: Date.now() };
+				if (global.tournamentTimers[m.sender]) clearTimeout(global.tournamentTimers[m.sender]);
+				await m.reply('Halo! Pilih slot turnamen kamu:\n\n*11* - Slot 11\n*33* - Slot 33\n*44* - Slot 44\n\nBalas dengan angka pilihanmu.');
+				return;
+			}
+
+			// State: menunggu pilihan 11/33/44
+			if (tournament[m.sender]?.state === 'waiting_choice' && !isCmd) {
+				if (/^(11|33|44)$/.test(bodyTrim)) {
+					const pilihan = bodyTrim;
+					tournament[m.sender].state = 'waiting_payment';
+					tournament[m.sender].pilihan = pilihan;
+					tournament[m.sender].image = null;
+					tournament[m.sender].name = null;
+					tournament[m.sender].time = Date.now();
+
+					const qrisPath = path.join(__dirname, 'src/media/qris.jpg');
+					const contohPath = path.join(__dirname, 'src/media/contoh_tf.jpg');
+					await naze.sendMessage(m.chat, { image: fs.readFileSync(qrisPath), caption: `Silahkan transfer ke QRIS di atas untuk slot *${pilihan}*.` });
+					await naze.sendMessage(m.chat, { image: fs.readFileSync(contohPath), caption: `*Contoh bukti transfer*\n\nSetelah transfer, kirimkan:\n1. Screenshot bukti transfer\n2. Atas Nama (contoh: *A.n Budi* atau *Budi*)\n\n⏰ *Batas waktu transfer: 5 menit*\nJika lebih dari 5 menit, silahkan ketik *daftar* lagi.` });
+
+					if (global.tournamentTimers[m.sender]) clearTimeout(global.tournamentTimers[m.sender]);
+					global.tournamentTimers[m.sender] = setTimeout(async () => {
+						if (tournament[m.sender]) {
+							delete tournament[m.sender];
+							await naze.sendMessage(m.chat, { text: 'Waktu habis! Silahkan ketik *daftar* lagi.' });
+						}
+					}, 5 * 60 * 1000);
+					return;
+				} else {
+					await m.reply('Pilihan tidak valid!\nKetik *11*, *33*, atau *44*');
+					return;
+				}
+			}
+
+			// State: menunggu bukti transfer
+			if (tournament[m.sender]?.state === 'waiting_payment' && !isCmd) {
+				const sesi = tournament[m.sender];
+
+				// Terima gambar (bukti transfer)
+				if (m.isMedia && m.mime && /image/.test(m.mime)) {
+					sesi.image = await naze.downloadMediaMessage(m);
+					const cap = (m.msg?.caption || '').trim();
+					if (cap && /^(a\.?n\.?\s*\w+|\w{2,30})$/i.test(cap)) sesi.name = cap;
+				}
+
+				// Terima nama dari teks biasa
+				if ((m.type === 'conversation' || m.type === 'extendedTextMessage') && !m.isMedia) {
+					if (/^(a\.?n\.?\s*\w+|\w{2,30})$/i.test(bodyTrim)) sesi.name = bodyTrim;
+				}
+
+				// Jika keduanya sudah diterima → forward ke grup monitor
+				if (sesi.image && sesi.name) {
+					if (global.tournamentTimers[m.sender]) clearTimeout(global.tournamentTimers[m.sender]);
+					delete global.tournamentTimers[m.sender];
+					const monitorJid = set.monitorGroup;
+					if (monitorJid) {
+						await naze.sendMessage(monitorJid, {
+							image: sesi.image,
+							caption: `*Bukti Transfer Turnamen*\nDari: @${m.sender.split('@')[0]}\nSlot: *${sesi.pilihan}*\nA.n: *${sesi.name}*`,
+							mentions: [m.sender]
+						});
+					}
+					delete tournament[m.sender];
+					await m.reply('Bukti transfer diterima! Pendaftaran kamu sedang diproses.');
+					return;
+				}
+
+				// Hanya gambar, minta nama
+				if (sesi.image && !sesi.name) {
+					await m.reply('Bukti diterima! Sekarang kirimkan *Atas Nama* kamu.\nContoh: *A.n Budi* atau *Budi*');
+					return;
+				}
+
+				// Hanya nama, minta gambar
+				if (sesi.name && !sesi.image) {
+					await m.reply('Nama diterima. Sekarang kirimkan *screenshot bukti transfer* kamu.');
+					return;
+				}
+
+				return;
+			}
+		}
+
 		// Menfes & Room Ai
 		if (!m.isGroup && (!isCmd || isCreator)) {
 			if (menfes[m.sender] && m.key.remoteJid !== 'status@broadcast' && m.msg) {
@@ -725,6 +819,15 @@ const naze = async (naze, m, msg, store) => {
 			}
 			break
 			
+			// Monitor Grup Turnamen
+			case 'monitor': {
+				if (!isCreator) return m.reply(global.mess.owner);
+				if (!m.isGroup) return m.reply('Perintah ini hanya bisa digunakan di dalam grup!');
+				set.monitorGroup = m.chat;
+				await m.reply('Grup ini telah dijadikan *Monitor Group*!\nSemua bukti pembayaran turnamen akan dikirim ke sini.');
+			}
+			break
+
 			// Owner Menu
 			case 'shutdown': case 'off': {
 				if (!isCreator) return m.reply(global.mess.owner)

@@ -284,7 +284,7 @@ const naze = async (naze, m, msg, store) => {
 		if (db.users[m.sender]?.ban && !isCreator) return
 		
 		// Filter Set Api Key
-		if (cases.includes(command) && isCmd && (command !== 'setapikey')) {
+		if (cases.includes(command) && isCmd && (command !== 'setapikey' && command !== 'monitor')) {
 			const currentKey = global.APIKeys[global.APIs.naze];
 			if (currentKey === 'YOUR_API_KEY' || !currentKey.startsWith('nz-')) {
 				return m.reply('Silahkan Ganti Apikey yang ada\ndi File settings.js dengan apikey mu\nAgar semua fitur bisa digunakan dengan normal\n\nAmbil Key di : https://naze.biz.id/profile\nKemudian Gunakan Perintah\n.setapikey key_nya');

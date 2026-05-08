@@ -289,7 +289,7 @@ const naze = async (naze, m, msg, store) => {
 		if (db.users[m.sender]?.ban && !isCreator) return
 		
 		// Filter Set Api Key
-		if (cases.includes(command) && isCmd && (command !== 'setapikey' && command !== 'monitor' && command !== 'addgrub')) {
+		if (cases.includes(command) && isCmd && (command !== 'setapikey' && command !== 'monitor' && command !== 'addgrub' && command !== 'listgrub' && command !== 'delgrub' && command !== 'pendingapply')) {
 			const currentKey = global.APIKeys[global.APIs.naze];
 			if (currentKey === 'YOUR_API_KEY' || !currentKey.startsWith('nz-')) {
 				return m.reply('Silahkan Ganti Apikey yang ada\ndi File settings.js dengan apikey mu\nAgar semua fitur bisa digunakan dengan normal\n\nAmbil Key di : https://naze.biz.id/profile\nKemudian Gunakan Perintah\n.setapikey key_nya');
@@ -687,7 +687,7 @@ const naze = async (naze, m, msg, store) => {
 		const isAccTolakGroup = m.isGroup && m.chat === set.monitorGroup && m.quoted && monitorMap[m.quoted.id];
 		if (isAccTolakGroup || isAccTolakPM) {
 			const teks = (body || '').trim().toLowerCase();
-			if (/^(acc|tolak)$/i.test(teks)) {
+			if (/^(acc|tolak(\s+.+)?)$/i.test(teks)) {
 				const data = monitorMap[m.quoted.id];
 				const userJid = data.senderJid;
 				const isAcc = /^acc$/i.test(teks);
@@ -700,7 +700,11 @@ const naze = async (naze, m, msg, store) => {
 					if (!pendingApply[m.sender]) pendingApply[m.sender] = [];
 					pendingApply[m.sender].push({ senderJid: userJid, pilihan: data.pilihan, name: data.name });
 				} else {
-					await naze.sendMessage(userJid, { text: `❌ *Pendaftaran Turnamen Ditolak*\nSlot: *${data.pilihan}*\n\nBukti transfer tidak valid atau bermasalah.\nSilahkan ketik *daftar* lagi dan kirim bukti yang benar.` });
+					const alasanTolak = body.trim().replace(/^tolak\s*/i, '').trim();
+					const pesanTolak = alasanTolak
+						? `❌ *Pendaftaran Turnamen Ditolak*\nSlot: *${data.pilihan}*\n\nAlasan: ${alasanTolak}\n\nSilahkan ketik *daftar* lagi dan kirim bukti yang benar.`
+						: `❌ *Pendaftaran Turnamen Ditolak*\nSlot: *${data.pilihan}*\n\nBukti transfer tidak valid atau bermasalah.\nSilahkan ketik *daftar* lagi dan kirim bukti yang benar.`;
+					await naze.sendMessage(userJid, { text: pesanTolak });
 					await m.reply(`❌ Pendaftaran @${userJid.split('@')[0]} ditolak.\nUser sudah diberitahu.`, { mentions: [userJid] });
 				}
 				delete monitorMap[m.quoted.id];
@@ -771,8 +775,11 @@ Silahkan ketik *apply* ulang dan pilih grup lain.`);
 				try {
 					await naze.groupParticipantsUpdate(grup.jid, [sesiApply.senderJid], 'add');
 					set.tournamentGroups[grupIdx].count += 1;
-					await m.reply(`✅ @${sesiApply.senderJid.split('@')[0]} berhasil dimasukkan ke grup *${grup.name}*!
-Slot: *${sesiApply.pilihan}* | Peserta: ${grup.count + 1}/4`, { mentions: [sesiApply.senderJid] });
+					const newCount = set.tournamentGroups[grupIdx].count;
+					let notifFull = '';
+					if (newCount >= 4) notifFull = '\n\n⛔ Grup *' + grup.name + '* sekarang *FULL* (4/4).';
+					else if (newCount === 3) notifFull = '\n\n⚠️ Grup *' + grup.name + '* tinggal *1 slot* lagi!';
+					await m.reply(`✅ @${sesiApply.senderJid.split('@')[0]} berhasil dimasukkan ke grup *${grup.name}*!\nSlot: *${sesiApply.pilihan}* | Peserta: ${newCount}/4${notifFull}`, { mentions: [sesiApply.senderJid] });
 					await naze.sendMessage(sesiApply.senderJid, { text: `✅ Kamu sudah berhasil dimasukkan ke grup turnamen!
 Grup: *${grup.name}*
 Slot: *${sesiApply.pilihan}*
@@ -996,6 +1003,56 @@ Error: ${e?.message || e}`);
 				if (existing) return m.reply(`Grup ini sudah terdaftar sebagai *${existing.name}* (Slot ${existing.slot})\nJumlah peserta: ${existing.count}/4`);
 				set.tournamentGroups.push({ jid: m.chat, name: grubNama, slot: grubSlot, count: 0 });
 				await m.reply(`✅ Grup *${grubNama}* berhasil didaftarkan untuk slot *${grubSlot}*!\nKapasitas: 0/4 peserta`);
+			}
+			break
+
+			// List semua grup turnamen
+			case 'listgrub': {
+				if (!isCreator) return m.reply(global.mess.owner);
+				if (!set.tournamentGroups || set.tournamentGroups.length === 0) return m.reply('Belum ada grup turnamen yang terdaftar.\nTambahkan dengan: *.addgrub [nama] [slot]*');
+				const bySlot = { '11': [], '33': [], '44': [] };
+				set.tournamentGroups.forEach((g, i) => {
+					const status = g.count >= 4 ? ' *(FULL)*' : g.count === 3 ? ' ⚠️' : '';
+					bySlot[g.slot]?.push(`${i + 1}. ${g.name} — ${g.count}/4${status}`);
+				});
+				let teks = '*📋 Daftar Grup Turnamen:*\n';
+				for (const slot of ['11', '33', '44']) {
+					if (bySlot[slot].length > 0) {
+						teks += `\n*Slot ${slot}:*\n` + bySlot[slot].join('\n') + '\n';
+					}
+				}
+				teks += '\n⚠️ = tinggal 1 slot | *(FULL)* = penuh';
+				await m.reply(teks);
+			}
+			break
+
+			// Hapus grup turnamen
+			case 'delgrub': {
+				if (!isCreator) return m.reply(global.mess.owner);
+				if (!set.tournamentGroups || set.tournamentGroups.length === 0) return m.reply('Belum ada grup yang terdaftar.');
+				if (!args[0]) {
+					const listDel = set.tournamentGroups.map((g, i) => `${i + 1}. ${g.name} (Slot ${g.slot}) — ${g.count}/4`).join('\n');
+					return m.reply(`Format: *.delgrub [nomor]*\n\nDaftar grup:\n${listDel}`);
+				}
+				const delIdx = parseInt(args[0]) - 1;
+				if (isNaN(delIdx) || delIdx < 0 || delIdx >= set.tournamentGroups.length) return m.reply(`Nomor tidak valid! Pilih 1 - ${set.tournamentGroups.length}`);
+				const deleted = set.tournamentGroups.splice(delIdx, 1)[0];
+				await m.reply(`🗑️ Grup *${deleted.name}* (Slot ${deleted.slot}) berhasil dihapus dari daftar.`);
+			}
+			break
+
+			// Cek antrian pendingApply
+			case 'pendingapply': {
+				if (!isCreator) return m.reply(global.mess.owner);
+				const ownerSender = m.sender;
+				const queue = pendingApply[ownerSender];
+				if (!queue || queue.length === 0) return m.reply('Tidak ada pendaftar yang menunggu di-apply.');
+				let qTeks = `*📬 Antrian Apply (${queue.length} pendaftar):*\n\n`;
+				queue.forEach((q, i) => {
+					qTeks += `${i + 1}. @${q.senderJid.split('@')[0]} — Slot *${q.pilihan}* | A.n: *${q.name || '-'}*\n`;
+				});
+				qTeks += '\nKetik *apply* (reply ke pesan bot di grup monitor) untuk proses satu per satu.';
+				await m.reply(qTeks, { mentions: queue.map(q => q.senderJid) });
 			}
 			break
 

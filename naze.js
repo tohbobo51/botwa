@@ -740,10 +740,10 @@ Pendaftar: @${applyData.senderJid.split('@')[0]} (A.n: ${applyData.name})
 				quotedMsgId: m.quoted.id
 			};
 			pendingApply[m.sender].shift();
+			if (!pendingApply[m.sender] || pendingApply[m.sender].length === 0) delete pendingApply[m.sender];
 			const sisaAntrian = pendingApply[m.sender]?.length || 0;
 			if (sisaAntrian > 0) {
-				await naze.sendMessage(m.chat, { text: `ℹ️ Masih ada *${sisaAntrian}* pendaftar lain yang menunggu.
-Ketik *apply* lagi untuk proses berikutnya.` }, { quoted: { key: { remoteJid: m.chat, id: 'dummy' }, message: {} } }).catch(() => {});
+				await m.reply(`ℹ️ Masih ada *${sisaAntrian}* pendaftar lain yang menunggu.\nKetik *apply* lagi untuk proses berikutnya.`);
 			}
 			return;
 		}

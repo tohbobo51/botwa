@@ -289,7 +289,7 @@ const naze = async (naze, m, msg, store) => {
 		if (db.users[m.sender]?.ban && !isCreator) return
 		
 		// Filter Set Api Key
-		if (cases.includes(command) && isCmd && (command !== 'setapikey' && command !== 'monitor' && command !== 'addgrub' && command !== 'listgrub' && command !== 'delgrub' && command !== 'pendingapply' && command !== 'resettur')) {
+		if (cases.includes(command) && isCmd && (command !== 'setapikey' && command !== 'monitor' && command !== 'addgrub' && command !== 'listgrub' && command !== 'delgrub' && command !== 'pendingapply' && command !== 'resettur' && command !== 'helptur' && command !== 'testur')) {
 			const currentKey = global.APIKeys[global.APIs.naze];
 			if (currentKey === 'YOUR_API_KEY' || !currentKey.startsWith('nz-')) {
 				return m.reply('Silahkan Ganti Apikey yang ada\ndi File settings.js dengan apikey mu\nAgar semua fitur bisa digunakan dengan normal\n\nAmbil Key di : https://naze.biz.id/profile\nKemudian Gunakan Perintah\n.setapikey key_nya');
@@ -1108,6 +1108,54 @@ await m.reply(`✅ Grup *${grupTer.name}* berhasil direset. ${kickedCount} peser
 } catch (e) {
 await m.reply('❌ Gagal mereset grup: ' + e.message);
 }
+}
+break
+
+// Help Turnamen (owner, monitor group only)
+case 'helptur': {
+if (!isCreator) return m.reply(global.mess.owner);
+if (!m.isGroup) return m.reply('Perintah ini hanya bisa digunakan di dalam grup!');
+if (m.chat !== set.monitorGroup) return m.reply('Perintah ini hanya bisa digunakan di grup *Monitor*!\nSet dulu dengan: *.monitor*');
+const helpText = `╔════════════════════╗\n║   *🏆 HELP TURNAMEN*   ║\n╚════════════════════╝\n\n*📌 Manajemen Grup:*\n✦ *.addgrub [nama] [slot]* — Daftarkan grup turnamen (jalankan di dalam grup)\n✦ *.listgrub* — Lihat semua grup terdaftar beserta status slot\n✦ *.delgrub [nomor]* — Hapus grup dari daftar\n✦ *.resettur* — Kick peserta biasa & reset slot ke 0/4 (jalankan di grup)\n\n*📌 Manajemen Pendaftaran:*\n✦ *.monitor* — Jadikan grup ini sebagai monitor group\n✦ *.pendingapply* — Lihat antrian peserta yang menunggu di-apply\n✦ *.setapikey [key]* — Ganti API key bot\n\n*📌 Utilitas:*\n✦ *.helptur* — Tampilkan menu ini (hanya di grup monitor)\n✦ *.testur [nomor]* — Tes kirim 3 pesan otomatis ke grup (simulasi penuh)\n\n📋 Semua command *khusus owner* & sebagian hanya di grup yang relevan.`;
+await m.reply(helpText);
+}
+break
+
+// Tes Auto Pesan Turnamen (owner, monitor group only)
+case 'testur': {
+if (!isCreator) return m.reply(global.mess.owner);
+if (!m.isGroup) return m.reply('Perintah ini hanya bisa digunakan di dalam grup!');
+if (m.chat !== set.monitorGroup) return m.reply('Perintah ini hanya bisa digunakan di grup *Monitor*!\nSet dulu dengan: *.monitor*');
+if (!set.tournamentGroups || set.tournamentGroups.length === 0) return m.reply('Belum ada grup turnamen yang terdaftar.\nTambahkan dulu dengan: *.addgrub [nama] [slot]*');
+if (!args[0]) {
+const listTes = set.tournamentGroups.map((g, i) => `${i + 1}. *${g.name}* (Slot ${g.slot}) — ${g.count}/4`).join('\n');
+return m.reply(`*🧪 Pilih grup untuk tes:*\n\n${listTes}\n\nKetik: *.testur [nomor]*`);
+}
+const tesIdx = parseInt(args[0]) - 1;
+if (isNaN(tesIdx) || tesIdx < 0 || tesIdx >= set.tournamentGroups.length) return m.reply(`Nomor tidak valid! Pilih 1 - ${set.tournamentGroups.length}`);
+const tesGrup = set.tournamentGroups[tesIdx];
+const botJid = naze.decodeJid(naze.user.id);
+let pesertaTes = [...(tesGrup.participants || [])];
+const ownerJidsTes = global.owner.map(o => o + '@s.whatsapp.net');
+while (pesertaTes.length < 4) pesertaTes.push(ownerJidsTes[pesertaTes.length % ownerJidsTes.length] || botJid);
+for (let i = pesertaTes.length - 1; i > 0; i--) {
+const j = Math.floor(Math.random() * (i + 1));
+[pesertaTes[i], pesertaTes[j]] = [pesertaTes[j], pesertaTes[i]];
+}
+const toJidT = jid => jid.endsWith('@s.whatsapp.net') ? jid : jid + '@s.whatsapp.net';
+const tp1 = toJidT(pesertaTes[0]), tp2 = toJidT(pesertaTes[1]), tp3 = toJidT(pesertaTes[2]), tp4 = toJidT(pesertaTes[3]);
+const rulesMsgT = `*RULES*‼️\n•HTTPS (HAYATO, CAROLIN, KELLY, ALOK)\n•NO SS00 (LVL DIBAWAH 20SS)\n•BOLE N ANIMASI 22/33/44\n•SG2 ONLY\n•NO ATAP (LANTAI 2)\n•NO CHAR CEWE\n•NO BUNDLE BALAP/BENCONG\n•NO SEPATU LONCAT ATAU TERBANG\n•NO DMG TINJU/USP\n•ALL SKIN\n•00 NO VEST GLOWAL\n•11 NO ZONA\n•33/44 BOLEH ZONA\n•BATAS OPR 10MNT!!!\n•NGARET MASUK 15MNT!!!\n *LANGGAR? DISS*`;
+const matchupMsgT = `@${tp1.split('@')[0]} vs @${tp2.split('@')[0]}\n@${tp3.split('@')[0]} vs @${tp4.split('@')[0]}`;
+const ownerMentionsT = ownerJidsTes;
+const ownerMsgT = `Jika ada Kendala Tag owner\n${ownerMentionsT.map(o => '@' + o.split('@')[0]).join(' ')}`;
+await m.reply(`🧪 *[TES]* Mengirim 3 pesan ke grup *${tesGrup.name}*...`);
+await sleep(800);
+await naze.sendMessage(tesGrup.jid, { text: `🧪 *[TES]*\n` + rulesMsgT });
+await sleep(800);
+await naze.sendMessage(tesGrup.jid, { text: `🧪 *[TES]*\n` + matchupMsgT, mentions: [tp1, tp2, tp3, tp4] });
+await sleep(800);
+await naze.sendMessage(tesGrup.jid, { text: `🧪 *[TES]*\n` + ownerMsgT, mentions: ownerMentionsT });
+await m.reply(`✅ Tes selesai! 3 pesan dikirim ke grup *${tesGrup.name}*.`);
 }
 break
 

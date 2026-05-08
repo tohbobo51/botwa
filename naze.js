@@ -691,14 +691,28 @@ const naze = async (naze, m, msg, store) => {
 				const data = monitorMap[m.quoted.id];
 				const userJid = data.senderJid;
 				const isAcc = /^acc$/i.test(teks);
-				if (isAcc) {
-					await naze.sendMessage(userJid, { text: `✅ *Pendaftaran Turnamen Diterima!*\nSlot: *${data.pilihan}*\nA.n: *${data.name}*\n\nSelamat bergabung! Pantau info selanjutnya dari admin.` });
-					const sentAcc = await naze.sendMessage(m.chat, {
-						text: `✅ Pendaftaran @${userJid.split('@')[0]} berhasil di-ACC.\nSlot: *${data.pilihan}* | A.n: *${data.name}*\n\nBalas pesan ini dengan *apply* untuk memasukkan ke grup.`,
-						mentions: [userJid]
-					}, { quoted: m });
-					if (!pendingApply[m.sender]) pendingApply[m.sender] = [];
-					pendingApply[m.sender].push({ senderJid: userJid, pilihan: data.pilihan, name: data.name });
+if (isAcc) {
+await naze.sendMessage(userJid, { text: `✅ *Pendaftaran Turnamen Diterima!*\nSlot: *${data.pilihan}*\nA.n: *${data.name}*\n\nSelamat bergabung! Pantau info selanjutnya dari admin.` });
+const slotAcc = data.pilihan;
+const grupsSlotAcc = set.tournamentGroups ? set.tournamentGroups.filter(g => g.slot === slotAcc) : [];
+if (grupsSlotAcc.length === 0) {
+await m.reply(`✅ @${userJid.split('@')[0]} berhasil di-ACC!\nNamun belum ada grup slot *${slotAcc}* yang terdaftar.\nTambahkan dulu dengan: *.addgrub [nama] ${slotAcc}*`, { mentions: [userJid] });
+} else {
+let listTeksAcc = `✅ Pendaftaran @${userJid.split('@')[0]} berhasil di-ACC!\nSlot: *${slotAcc}* | A.n: *${data.name}*\n\n*Pilih Grup untuk dimasukkan:*\n\n`;
+grupsSlotAcc.forEach((g, i) => {
+const isFull = g.count >= 4;
+listTeksAcc += `*${i + 1}.* ${g.name} — ${g.count}/4${isFull ? ' *(FULL)*' : ''}\n`;
+});
+listTeksAcc += '\nBalas dengan *nomor* pilihanmu.';
+await m.reply(listTeksAcc, { mentions: [userJid] });
+applySession[m.sender] = {
+senderJid: userJid,
+pilihan: slotAcc,
+name: data.name,
+grupsSlot: grupsSlotAcc,
+chat: m.chat,
+};
+}
 				} else {
 					const alasanTolak = body.trim().replace(/^tolak\s*/i, '').trim();
 					const pesanTolak = alasanTolak
@@ -1131,21 +1145,22 @@ if (tesGrupIdx === -1) return m.reply('Grup ini tidak terdaftar sebagai grup tur
 const tesGrup = set.tournamentGroups[tesGrupIdx];
 const botJid = naze.decodeJid(naze.user.id);
 const ownerJidsTes = global.owner.map(o => o + '@s.whatsapp.net');
-// Gunakan peserta asli kalau ada, sisanya pakai owner sebagai dummy
 let pesertaTes = [...(tesGrup.participants || [])];
 while (pesertaTes.length < 4) pesertaTes.push(ownerJidsTes[pesertaTes.length % ownerJidsTes.length] || botJid);
-// Acak urutan matchup
 for (let i = pesertaTes.length - 1; i > 0; i--) {
 const j = Math.floor(Math.random() * (i + 1));
 [pesertaTes[i], pesertaTes[j]] = [pesertaTes[j], pesertaTes[i]];
 }
+// Set data ke FULL supaya .listgrub menampilkan 4/4 (FULL)
+set.tournamentGroups[tesGrupIdx].count = 4;
+set.tournamentGroups[tesGrupIdx].participants = pesertaTes.slice(0, 4);
 const toJidT = jid => jid.endsWith('@s.whatsapp.net') ? jid : jid + '@s.whatsapp.net';
 const tp1 = toJidT(pesertaTes[0]), tp2 = toJidT(pesertaTes[1]), tp3 = toJidT(pesertaTes[2]), tp4 = toJidT(pesertaTes[3]);
 const rulesMsgT = `*RULES*‼️\n•HTTPS (HAYATO, CAROLIN, KELLY, ALOK)\n•NO SS00 (LVL DIBAWAH 20SS)\n•BOLE N ANIMASI 22/33/44\n•SG2 ONLY\n•NO ATAP (LANTAI 2)\n•NO CHAR CEWE\n•NO BUNDLE BALAP/BENCONG\n•NO SEPATU LONCAT ATAU TERBANG\n•NO DMG TINJU/USP\n•ALL SKIN\n•00 NO VEST GLOWAL\n•11 NO ZONA\n•33/44 BOLEH ZONA\n•BATAS OPR 10MNT!!!\n•NGARET MASUK 15MNT!!!\n *LANGGAR? DISS*`;
 const matchupMsgT = `@${tp1.split('@')[0]} vs @${tp2.split('@')[0]}\n@${tp3.split('@')[0]} vs @${tp4.split('@')[0]}`;
 const ownerMentionsT = ownerJidsTes;
 const ownerMsgT = `Jika ada Kendala Tag owner\n${ownerMentionsT.map(o => '@' + o.split('@')[0]).join(' ')}`;
-await m.reply(`🧪 *[TES]* Simulasi grup *${tesGrup.name}* penuh — mengirim 3 pesan...\n\n_Data asli tidak berubah. Gunakan .resettur untuk reset slot._`);
+await m.reply(`🧪 *[TES]* Simulasi grup *${tesGrup.name}* — status diset ke 4/4 (FULL)\nMengirim 3 pesan...`);
 await sleep(800);
 await naze.sendMessage(m.chat, { text: `🧪 *[TES]*\n` + rulesMsgT });
 await sleep(800);
@@ -1153,7 +1168,7 @@ await naze.sendMessage(m.chat, { text: `🧪 *[TES]*\n` + matchupMsgT, mentions:
 await sleep(800);
 await naze.sendMessage(m.chat, { text: `🧪 *[TES]*\n` + ownerMsgT, mentions: ownerMentionsT });
 await sleep(500);
-await m.reply(`✅ Tes selesai! Cek apakah 3 pesan sudah sesuai.\n\nKetik *.resettur* di sini jika ingin reset slot kembali ke 0/4.`);
+await m.reply(`✅ Tes selesai! Cek 3 pesan di atas.\n\nGrup sekarang tercatat *4/4 (FULL)* — cek dengan *.listgrub*\nKetik *.resettur* di sini untuk reset kembali ke 0/4.`);
 }
 break
 

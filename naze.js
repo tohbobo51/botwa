@@ -697,7 +697,8 @@ const naze = async (naze, m, msg, store) => {
 						text: `✅ Pendaftaran @${userJid.split('@')[0]} berhasil di-ACC.\nSlot: *${data.pilihan}* | A.n: *${data.name}*\n\nBalas pesan ini dengan *apply* untuk memasukkan ke grup.`,
 						mentions: [userJid]
 					}, { quoted: m });
-					pendingApply[m.sender] = { senderJid: userJid, pilihan: data.pilihan, name: data.name };
+					if (!pendingApply[m.sender]) pendingApply[m.sender] = [];
+					pendingApply[m.sender].push({ senderJid: userJid, pilihan: data.pilihan, name: data.name });
 				} else {
 					await naze.sendMessage(userJid, { text: `❌ *Pendaftaran Turnamen Ditolak*\nSlot: *${data.pilihan}*\n\nBukti transfer tidak valid atau bermasalah.\nSilahkan ketik *daftar* lagi dan kirim bukti yang benar.` });
 					await m.reply(`❌ Pendaftaran @${userJid.split('@')[0]} ditolak.\nUser sudah diberitahu.`, { mentions: [userJid] });
@@ -709,9 +710,9 @@ const naze = async (naze, m, msg, store) => {
 
 
 		// APPLY handler - owner reply "apply" ke pesan ACC
-		const isApplyReply = isCreator && pendingApply[m.sender] && (body || '').trim().toLowerCase() === 'apply';
+		const isApplyReply = isCreator && pendingApply[m.sender]?.length > 0 && (body || '').trim().toLowerCase() === 'apply';
 		if (isApplyReply) {
-			const applyData = pendingApply[m.sender];
+			const applyData = pendingApply[m.sender][0];
 			const slot = applyData.pilihan;
 			const grupsSlot = set.tournamentGroups.filter(g => g.slot === slot);
 			if (grupsSlot.length === 0) {
@@ -738,7 +739,12 @@ Pendaftar: @${applyData.senderJid.split('@')[0]} (A.n: ${applyData.name})
 				chat: m.chat,
 				quotedMsgId: m.quoted.id
 			};
-			delete pendingApply[m.sender];
+			pendingApply[m.sender].shift();
+			const sisaAntrian = pendingApply[m.sender]?.length || 0;
+			if (sisaAntrian > 0) {
+				await naze.sendMessage(m.chat, { text: `ℹ️ Masih ada *${sisaAntrian}* pendaftar lain yang menunggu.
+Ketik *apply* lagi untuk proses berikutnya.` }, { quoted: { key: { remoteJid: m.chat, id: 'dummy' }, message: {} } }).catch(() => {});
+			}
 			return;
 		}
 

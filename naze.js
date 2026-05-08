@@ -710,7 +710,7 @@ const naze = async (naze, m, msg, store) => {
 
 
 		// APPLY handler - owner reply "apply" ke pesan ACC
-		const isApplyReply = isCreator && pendingApply[m.sender]?.length > 0 && (body || '').trim().toLowerCase() === 'apply';
+		const isApplyReply = isCreator && m.isGroup && m.chat === set.monitorGroup && m.quoted && pendingApply[m.sender]?.length > 0 && (body || '').trim().toLowerCase() === 'apply';
 		if (isApplyReply) {
 			const applyData = pendingApply[m.sender][0];
 			const slot = applyData.pilihan;
@@ -749,7 +749,7 @@ Pendaftar: @${applyData.senderJid.split('@')[0]} (A.n: ${applyData.name})
 		}
 
 		// NUMBER SELECTION handler - owner pilih nomor grup
-		if (isCreator && applySession[m.sender]) {
+		if (isCreator && m.isGroup && m.chat === set.monitorGroup && applySession[m.sender]) {
 			const sesiApply = applySession[m.sender];
 			const num = parseInt((body || '').trim());
 			if (!isNaN(num) && num >= 1 && num <= sesiApply.grupsSlot.length) {

@@ -98,6 +98,9 @@ const naze = async (naze, m, msg, store) => {
 	let pendingApply = db.game.pendingApply;
 	if (!db.game.applySession) db.game.applySession = {};
 	let applySession = db.game.applySession;
+	if (!db.game.proofQueue) db.game.proofQueue = [];
+	let proofQueue = db.game.proofQueue;
+	if (db.game.activeProof === undefined) db.game.activeProof = null;
 	if (!set.tournamentGroups) set.tournamentGroups = [];
 	if (!global.tournamentTimers) global.tournamentTimers = {};
 	
@@ -289,7 +292,7 @@ const naze = async (naze, m, msg, store) => {
 		if (db.users[m.sender]?.ban && !isCreator) return
 		
 		// Filter Set Api Key
-		if (cases.includes(command) && isCmd && (command !== 'setapikey' && command !== 'monitor' && command !== 'addgrub' && command !== 'listgrub' && command !== 'delgrub' && command !== 'pendingapply' && command !== 'resettur' && command !== 'helptur' && command !== 'testur')) {
+		if (cases.includes(command) && isCmd && (command !== 'setapikey' && command !== 'monitor' && command !== 'addgrub' && command !== 'listgrub' && command !== 'delgrub' && command !== 'pending' && command !== 'resettur' && command !== 'helptur' && command !== 'testur')) {
 			const currentKey = global.APIKeys[global.APIs.naze];
 			if (currentKey === 'YOUR_API_KEY' || !currentKey.startsWith('nz-')) {
 				return m.reply('Silahkan Ganti Apikey yang ada\ndi File settings.js dengan apikey mu\nAgar semua fitur bisa digunakan dengan normal\n\nAmbil Key di : https://naze.biz.id/profile\nKemudian Gunakan Perintah\n.setapikey key_nya');
@@ -720,6 +723,24 @@ chat: m.chat,
 						: `❌ *Pendaftaran Turnamen Ditolak*\nSlot: *${data.pilihan}*\n\nBukti transfer tidak valid atau bermasalah.\nSilahkan ketik *daftar* lagi dan kirim bukti yang benar.`;
 					await naze.sendMessage(userJid, { text: pesanTolak });
 					await m.reply(`❌ Pendaftaran @${userJid.split('@')[0]} ditolak.\nUser sudah diberitahu.`, { mentions: [userJid] });
+					// Setelah TOLAK → clear active proof dan tampilkan antrian berikutnya
+					db.game.activeProof = null;
+					if (proofQueue.length > 0) {
+						const _nxt = proofQueue.shift();
+						db.game.activeProof = { senderJid: _nxt.senderJid, pilihan: _nxt.pilihan, name: _nxt.name };
+						const _mJid2 = set.monitorGroup;
+						if (_mJid2 && _nxt.tmpPath && fs.existsSync(_nxt.tmpPath)) {
+							const _nxtBuf = fs.readFileSync(_nxt.tmpPath);
+							const _nxtSent = await naze.sendMessage(_mJid2, {
+								image: _nxtBuf,
+								caption: `*📋 Bukti Transfer Turnamen*\nDari: @${_nxt.senderJid.split('@')[0]}\nNo: ${_nxt.senderJid.split('@')[0]}\nSlot: *${_nxt.pilihan}*\nA.n: *${_nxt.name}*\n\n_Reply pesan ini dengan *acc* atau *tolak*_`,
+								mentions: [_nxt.senderJid]
+							});
+							if (_nxtSent?.key?.id) monitorMap[_nxtSent.key.id] = { senderJid: _nxt.senderJid, pilihan: _nxt.pilihan, name: _nxt.name };
+							if (fs.existsSync(_nxt.tmpPath)) fs.unlinkSync(_nxt.tmpPath);
+							await naze.sendMessage(_mJid2, { text: `📬 *Bukti antrian berikutnya* (sisa: ${proofQueue.length})\nDari: @${_nxt.senderJid.split('@')[0]} | Slot: *${_nxt.pilihan}* | A.n: *${_nxt.name}*`, mentions: [_nxt.senderJid] });
+						}
+					}
 				}
 				delete monitorMap[m.quoted.id];
 				return;
@@ -824,6 +845,24 @@ await naze.sendMessage(grup.jid, { text: ownerMsg, mentions: ownerMentions });
 					await m.reply(`Gagal memasukkan user ke grup. Pastikan bot adalah admin di grup *${grup.name}*.
 Error: ${e?.message || e}`);
 				}
+				// Setelah berhasil add → clear active proof dan tampilkan antrian berikutnya
+				db.game.activeProof = null;
+				if (proofQueue.length > 0) {
+					const _nxtA = proofQueue.shift();
+					db.game.activeProof = { senderJid: _nxtA.senderJid, pilihan: _nxtA.pilihan, name: _nxtA.name };
+					const _mJidA = set.monitorGroup;
+					if (_mJidA && _nxtA.tmpPath && fs.existsSync(_nxtA.tmpPath)) {
+						const _nxtABuf = fs.readFileSync(_nxtA.tmpPath);
+						const _nxtASent = await naze.sendMessage(_mJidA, {
+							image: _nxtABuf,
+							caption: `*📋 Bukti Transfer Turnamen*\nDari: @${_nxtA.senderJid.split('@')[0]}\nNo: ${_nxtA.senderJid.split('@')[0]}\nSlot: *${_nxtA.pilihan}*\nA.n: *${_nxtA.name}*\n\n_Reply pesan ini dengan *acc* atau *tolak*_`,
+							mentions: [_nxtA.senderJid]
+						});
+						if (_nxtASent?.key?.id) monitorMap[_nxtASent.key.id] = { senderJid: _nxtA.senderJid, pilihan: _nxtA.pilihan, name: _nxtA.name };
+						if (fs.existsSync(_nxtA.tmpPath)) fs.unlinkSync(_nxtA.tmpPath);
+						await naze.sendMessage(_mJidA, { text: `📬 *Bukti antrian berikutnya* (sisa: ${proofQueue.length})\nDari: @${_nxtA.senderJid.split('@')[0]} | Slot: *${_nxtA.pilihan}* | A.n: *${_nxtA.name}*`, mentions: [_nxtA.senderJid] });
+					}
+				}
 				delete applySession[m.sender];
 				return;
 			} else if (!isNaN(num)) {
@@ -908,12 +947,24 @@ Error: ${e?.message || e}`);
 					if (/^[a-zA-Z\u00C0-\u024F][a-zA-Z\u00C0-\u024F\s'\.]{0,48}$/.test(bodyTrim)) sesi.name = bodyTrim.replace(/^a\.?n\.?\s*/i, '').trim();
 				}
 
-				// Jika keduanya sudah diterima → forward ke grup monitor
+				// Jika keduanya sudah diterima → forward ke grup monitor (dengan sistem antrian)
 				if (sesi.imagePath && sesi.name) {
 					if (global.tournamentTimers[m.sender]) clearTimeout(global.tournamentTimers[m.sender]);
 					delete global.tournamentTimers[m.sender];
 
 					const monitorJid = set.monitorGroup;
+
+					// Jika ada bukti aktif yang sedang diproses owner → masukkan ke antrian
+					if (db.game.activeProof) {
+						proofQueue.push({ senderJid: m.sender, pilihan: sesi.pilihan, name: sesi.name, tmpPath: sesi.imagePath });
+						delete tournament[m.sender];
+						await m.reply(`✅ Bukti transfer diterima!\nKamu ada di antrian nomor *${proofQueue.length}*. Mohon tunggu, admin sedang memproses pendaftar sebelumnya.`);
+						return;
+					}
+
+					// Tidak ada bukti aktif → langsung forward ke monitor
+					db.game.activeProof = { senderJid: m.sender, pilihan: sesi.pilihan, name: sesi.name };
+
 					if (monitorJid) {
 						// Baca file temp lalu kirim
 						const imgBuf = fs.existsSync(sesi.imagePath) ? fs.readFileSync(sesi.imagePath) : null;
@@ -1077,17 +1128,28 @@ Error: ${e?.message || e}`);
 			break
 
 			// Cek antrian pendingApply
-			case 'pendingapply': {
+			case 'pending': {
 				if (!isCreator) return m.reply(global.mess.owner);
-				const ownerSender = m.sender;
-				const queue = pendingApply[ownerSender];
-				if (!queue || queue.length === 0) return m.reply('Tidak ada pendaftar yang menunggu di-apply.');
-				let qTeks = `*📬 Antrian Apply (${queue.length} pendaftar):*\n\n`;
-				queue.forEach((q, i) => {
-					qTeks += `${i + 1}. @${q.senderJid.split('@')[0]} — Slot *${q.pilihan}* | A.n: *${q.name || '-'}*\n`;
-				});
-				qTeks += '\nKetik *apply* (reply ke pesan bot di grup monitor) untuk proses satu per satu.';
-				await m.reply(qTeks, { mentions: queue.map(q => q.senderJid) });
+				const activeNow = db.game.activeProof;
+				const queueNow = proofQueue;
+				if (!activeNow && queueNow.length === 0) {
+					return m.reply('📭 Tidak ada bukti transfer yang sedang diproses atau dalam antrian.');
+				}
+				let pTeks = `*📋 Status Antrian Bukti Transfer*\n\n`;
+				if (activeNow) {
+					pTeks += `*🟢 Sedang Diproses:*\n◦ @${activeNow.senderJid.split('@')[0]} | Slot *${activeNow.pilihan}* | A.n: *${activeNow.name}*\n\n`;
+				}
+				if (queueNow.length > 0) {
+					pTeks += `*⏳ Menunggu (${queueNow.length}):*\n`;
+					queueNow.forEach((q, i) => {
+						pTeks += `${i + 1}. @${q.senderJid.split('@')[0]} | Slot *${q.pilihan}* | A.n: *${q.name}*\n`;
+					});
+				}
+				pTeks += '\n_Bukti berikutnya otomatis muncul setelah yang aktif selesai (acc+masukkan grup / tolak)._';
+				const allPendingMentions = [];
+				if (activeNow) allPendingMentions.push(activeNow.senderJid);
+				queueNow.forEach(q => allPendingMentions.push(q.senderJid));
+				await m.reply(pTeks, { mentions: allPendingMentions });
 			}
 			break
 
@@ -1130,7 +1192,7 @@ case 'helptur': {
 if (!isCreator) return m.reply(global.mess.owner);
 if (!m.isGroup) return m.reply('Perintah ini hanya bisa digunakan di dalam grup!');
 if (m.chat !== set.monitorGroup) return m.reply('Perintah ini hanya bisa digunakan di grup *Monitor*!\nSet dulu dengan: *.monitor*');
-const helpText = `╔════════════════════╗\n║   *🏆 HELP TURNAMEN*   ║\n╚════════════════════╝\n\n*📌 Manajemen Grup:*\n✦ *.addgrub [nama] [slot]* — Daftarkan grup turnamen (jalankan di dalam grup)\n✦ *.listgrub* — Lihat semua grup terdaftar beserta status slot\n✦ *.delgrub [nomor]* — Hapus grup dari daftar\n✦ *.resettur* — Kick peserta biasa & reset slot ke 0/4 (jalankan di grup)\n\n*📌 Manajemen Pendaftaran:*\n✦ *.monitor* — Jadikan grup ini sebagai monitor group\n✦ *.pendingapply* — Lihat antrian peserta yang menunggu di-apply\n✦ *.setapikey [key]* — Ganti API key bot\n\n*📌 Utilitas:*\n✦ *.helptur* — Tampilkan menu ini (hanya di grup monitor)\n✦ *.testur* — Simulasi grup penuh & kirim 3 pesan tes (jalankan di dalam grup turnamen)\n\n📋 Semua command *khusus owner* & sebagian hanya di grup yang relevan.`;
+const helpText = `╔════════════════════╗\n║   *🏆 HELP TURNAMEN*   ║\n╚════════════════════╝\n\n*📌 Manajemen Grup:*\n✦ *.addgrub [nama] [slot]* — Daftarkan grup turnamen (jalankan di dalam grup)\n✦ *.listgrub* — Lihat semua grup terdaftar beserta status slot\n✦ *.delgrub [nomor]* — Hapus grup dari daftar\n✦ *.resettur* — Kick peserta biasa & reset slot ke 0/4 (jalankan di grup)\n\n*📌 Manajemen Pendaftaran:*\n✦ *.monitor* — Jadikan grup ini sebagai monitor group\n✦ *.pending* — Lihat status antrian bukti transfer (aktif & menunggu)\n✦ *.setapikey [key]* — Ganti API key bot\n\n*📌 Utilitas:*\n✦ *.helptur* — Tampilkan menu ini (hanya di grup monitor)\n✦ *.testur* — Simulasi grup penuh & kirim 3 pesan tes (jalankan di dalam grup turnamen)\n\n📋 Semua command *khusus owner* & sebagian hanya di grup yang relevan.`;
 await m.reply(helpText);
 }
 break

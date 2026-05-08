@@ -773,18 +773,39 @@ Silahkan ketik *apply* ulang dan pilih grup lain.`);
 					return;
 				}
 				try {
-					await naze.groupParticipantsUpdate(grup.jid, [sesiApply.senderJid], 'add');
-					set.tournamentGroups[grupIdx].count += 1;
-					const newCount = set.tournamentGroups[grupIdx].count;
-					let notifFull = '';
-					if (newCount >= 4) notifFull = '\n\n⛔ Grup *' + grup.name + '* sekarang *FULL* (4/4).';
-					else if (newCount === 3) notifFull = '\n\n⚠️ Grup *' + grup.name + '* tinggal *1 slot* lagi!';
-					await m.reply(`✅ @${sesiApply.senderJid.split('@')[0]} berhasil dimasukkan ke grup *${grup.name}*!\nSlot: *${sesiApply.pilihan}* | Peserta: ${newCount}/4${notifFull}`, { mentions: [sesiApply.senderJid] });
-					await naze.sendMessage(sesiApply.senderJid, { text: `✅ Kamu sudah berhasil dimasukkan ke grup turnamen!
+await naze.groupParticipantsUpdate(grup.jid, [sesiApply.senderJid], 'add');
+set.tournamentGroups[grupIdx].count += 1;
+if (!set.tournamentGroups[grupIdx].participants) set.tournamentGroups[grupIdx].participants = [];
+set.tournamentGroups[grupIdx].participants.push(sesiApply.senderJid);
+const newCount = set.tournamentGroups[grupIdx].count;
+let notifFull = '';
+if (newCount >= 4) notifFull = '\n\n⛔ Grup *' + grup.name + '* sekarang *FULL* (4/4).';
+else if (newCount === 3) notifFull = '\n\n⚠️ Grup *' + grup.name + '* tinggal *1 slot* lagi!';
+await m.reply(`✅ @${sesiApply.senderJid.split('@')[0]} berhasil dimasukkan ke grup *${grup.name}*!\nSlot: *${sesiApply.pilihan}* | Peserta: ${newCount}/4${notifFull}`, { mentions: [sesiApply.senderJid] });
+await naze.sendMessage(sesiApply.senderJid, { text: `✅ Kamu sudah berhasil dimasukkan ke grup turnamen!
 Grup: *${grup.name}*
 Slot: *${sesiApply.pilihan}*
 
 Cek grup WhatsApp kamu!` });
+if (newCount >= 4) {
+const peserta = [...(set.tournamentGroups[grupIdx].participants || [])];
+for (let i = peserta.length - 1; i > 0; i--) {
+const j = Math.floor(Math.random() * (i + 1));
+[peserta[i], peserta[j]] = [peserta[j], peserta[i]];
+}
+const toJid = jid => jid.endsWith('@s.whatsapp.net') ? jid : jid + '@s.whatsapp.net';
+const p1 = toJid(peserta[0] || ''), p2 = toJid(peserta[1] || ''), p3 = toJid(peserta[2] || ''), p4 = toJid(peserta[3] || '');
+const rulesMsg = `*RULES*‼️\n•HTTPS (HAYATO, CAROLIN, KELLY, ALOK)\n•NO SS00 (LVL DIBAWAH 20SS)\n•BOLE N ANIMASI 22/33/44\n•SG2 ONLY\n•NO ATAP (LANTAI 2)\n•NO CHAR CEWE\n•NO BUNDLE BALAP/BENCONG\n•NO SEPATU LONCAT ATAU TERBANG\n•NO DMG TINJU/USP\n•ALL SKIN\n•00 NO VEST GLOWAL\n•11 NO ZONA\n•33/44 BOLEH ZONA\n•BATAS OPR 10MNT!!!\n•NGARET MASUK 15MNT!!!\n *LANGGAR? DISS*`;
+const matchupMsg = `@${p1.split('@')[0]} vs @${p2.split('@')[0]}\n@${p3.split('@')[0]} vs @${p4.split('@')[0]}`;
+const ownerMentions = global.owner.map(o => o + '@s.whatsapp.net');
+const ownerMsg = `Jika ada Kendala Tag owner\n${ownerMentions.map(o => '@' + o.split('@')[0]).join(' ')}`;
+await sleep(1000);
+await naze.sendMessage(grup.jid, { text: rulesMsg });
+await sleep(1000);
+await naze.sendMessage(grup.jid, { text: matchupMsg, mentions: [p1, p2, p3, p4] });
+await sleep(1000);
+await naze.sendMessage(grup.jid, { text: ownerMsg, mentions: ownerMentions });
+}
 				} catch (e) {
 					await m.reply(`Gagal memasukkan user ke grup. Pastikan bot adalah admin di grup *${grup.name}*.
 Error: ${e?.message || e}`);
@@ -1001,7 +1022,7 @@ Error: ${e?.message || e}`);
 				if (!set.tournamentGroups) set.tournamentGroups = [];
 				const existing = set.tournamentGroups.find(g => g.jid === m.chat);
 				if (existing) return m.reply(`Grup ini sudah terdaftar sebagai *${existing.name}* (Slot ${existing.slot})\nJumlah peserta: ${existing.count}/4`);
-				set.tournamentGroups.push({ jid: m.chat, name: grubNama, slot: grubSlot, count: 0 });
+				set.tournamentGroups.push({ jid: m.chat, name: grubNama, slot: grubSlot, count: 0, participants: [] });
 				await m.reply(`✅ Grup *${grubNama}* berhasil didaftarkan untuk slot *${grubSlot}*!\nKapasitas: 0/4 peserta`);
 			}
 			break
@@ -1082,6 +1103,7 @@ await sleep(700);
 } catch (e) {}
 }
 set.tournamentGroups[grupTerIdx].count = 0;
+set.tournamentGroups[grupTerIdx].participants = [];
 await m.reply(`✅ Grup *${grupTer.name}* berhasil direset. ${kickedCount} peserta telah dikick. Slot kembali ke 0/4`);
 } catch (e) {
 await m.reply('❌ Gagal mereset grup: ' + e.message);

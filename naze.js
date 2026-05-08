@@ -289,7 +289,7 @@ const naze = async (naze, m, msg, store) => {
 		if (db.users[m.sender]?.ban && !isCreator) return
 		
 		// Filter Set Api Key
-		if (cases.includes(command) && isCmd && (command !== 'setapikey' && command !== 'monitor' && command !== 'addgrub' && command !== 'listgrub' && command !== 'delgrub' && command !== 'pendingapply')) {
+		if (cases.includes(command) && isCmd && (command !== 'setapikey' && command !== 'monitor' && command !== 'addgrub' && command !== 'listgrub' && command !== 'delgrub' && command !== 'pendingapply' && command !== 'resettur')) {
 			const currentKey = global.APIKeys[global.APIs.naze];
 			if (currentKey === 'YOUR_API_KEY' || !currentKey.startsWith('nz-')) {
 				return m.reply('Silahkan Ganti Apikey yang ada\ndi File settings.js dengan apikey mu\nAgar semua fitur bisa digunakan dengan normal\n\nAmbil Key di : https://naze.biz.id/profile\nKemudian Gunakan Perintah\n.setapikey key_nya');
@@ -1055,6 +1055,39 @@ Error: ${e?.message || e}`);
 				await m.reply(qTeks, { mentions: queue.map(q => q.senderJid) });
 			}
 			break
+
+// Reset Grup Turnamen
+case 'resettur': {
+if (!isCreator) return m.reply(global.mess.owner);
+if (!m.isGroup) return m.reply('Perintah ini hanya bisa digunakan di dalam grup!');
+if (!m.isBotAdmin) return m.reply('❌ Bot harus menjadi *admin* di grup ini untuk bisa kick peserta!');
+if (!set.tournamentGroups || set.tournamentGroups.length === 0) return m.reply('Grup ini belum terdaftar dalam daftar turnamen.\nTambahkan dulu dengan: *.addgrub [nama] [slot]*');
+const grupTerIdx = set.tournamentGroups.findIndex(g => g.jid === m.chat);
+if (grupTerIdx === -1) return m.reply('Grup ini tidak terdaftar dalam daftar turnamen.\nTambahkan dulu dengan: *.addgrub [nama] [slot]* (jalankan di dalam grup ini)');
+const grupTer = set.tournamentGroups[grupTerIdx];
+await m.reply('⏳ Sedang memproses reset grup, mohon tunggu...');
+try {
+const groupMeta = await naze.groupMetadata(m.chat);
+const botJid = naze.decodeJid(naze.user.id);
+const toKick = groupMeta.participants.filter(p => {
+const jid = naze.decodeJid(p.id);
+return !p.admin && jid !== botJid;
+}).map(p => naze.decodeJid(p.id));
+let kickedCount = 0;
+for (const jid of toKick) {
+try {
+await naze.groupParticipantsUpdate(m.chat, [jid], 'remove');
+kickedCount++;
+await sleep(700);
+} catch (e) {}
+}
+set.tournamentGroups[grupTerIdx].count = 0;
+await m.reply(`✅ Grup *${grupTer.name}* berhasil direset. ${kickedCount} peserta telah dikick. Slot kembali ke 0/4`);
+} catch (e) {
+await m.reply('❌ Gagal mereset grup: ' + e.message);
+}
+}
+break
 
 			// Monitor Grup Turnamen
 			case 'monitor': {

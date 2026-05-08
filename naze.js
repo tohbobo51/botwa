@@ -730,8 +730,7 @@ Pendaftar: @${applyData.senderJid.split('@')[0]} (A.n: ${applyData.name})
 				listTeks += `*${i + 1}.* ${g.name} — ${g.count}/4${isFull ? ' *(FULL)*' : ''}
 `;
 			});
-			listTeks += '
-Balas dengan *nomor* pilihanmu.';
+			listTeks += '\nBalas dengan *nomor* pilihanmu.';
 			const sentList = await m.reply(listTeks, { mentions: [applyData.senderJid] });
 			applySession[m.sender] = {
 				senderJid: applyData.senderJid,

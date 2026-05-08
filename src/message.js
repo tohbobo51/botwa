@@ -326,7 +326,7 @@ async function MessagesUpsert(naze, message, store) {
 		if (nazeHandler) {
 			nazeHandler(naze, m, msg, store);
 		} else {
-			await reloadNaze();
+			await reloadHandler();
 			if (nazeHandler) nazeHandler(naze, m, msg, store);
 		}
 		if (global.db?.set?.[botNumber]?.readsw && msg.key.remoteJid === 'status@broadcast') {

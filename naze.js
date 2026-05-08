@@ -1116,7 +1116,7 @@ case 'helptur': {
 if (!isCreator) return m.reply(global.mess.owner);
 if (!m.isGroup) return m.reply('Perintah ini hanya bisa digunakan di dalam grup!');
 if (m.chat !== set.monitorGroup) return m.reply('Perintah ini hanya bisa digunakan di grup *Monitor*!\nSet dulu dengan: *.monitor*');
-const helpText = `╔════════════════════╗\n║   *🏆 HELP TURNAMEN*   ║\n╚════════════════════╝\n\n*📌 Manajemen Grup:*\n✦ *.addgrub [nama] [slot]* — Daftarkan grup turnamen (jalankan di dalam grup)\n✦ *.listgrub* — Lihat semua grup terdaftar beserta status slot\n✦ *.delgrub [nomor]* — Hapus grup dari daftar\n✦ *.resettur* — Kick peserta biasa & reset slot ke 0/4 (jalankan di grup)\n\n*📌 Manajemen Pendaftaran:*\n✦ *.monitor* — Jadikan grup ini sebagai monitor group\n✦ *.pendingapply* — Lihat antrian peserta yang menunggu di-apply\n✦ *.setapikey [key]* — Ganti API key bot\n\n*📌 Utilitas:*\n✦ *.helptur* — Tampilkan menu ini (hanya di grup monitor)\n✦ *.testur [nomor]* — Tes kirim 3 pesan otomatis ke grup (simulasi penuh)\n\n📋 Semua command *khusus owner* & sebagian hanya di grup yang relevan.`;
+const helpText = `╔════════════════════╗\n║   *🏆 HELP TURNAMEN*   ║\n╚════════════════════╝\n\n*📌 Manajemen Grup:*\n✦ *.addgrub [nama] [slot]* — Daftarkan grup turnamen (jalankan di dalam grup)\n✦ *.listgrub* — Lihat semua grup terdaftar beserta status slot\n✦ *.delgrub [nomor]* — Hapus grup dari daftar\n✦ *.resettur* — Kick peserta biasa & reset slot ke 0/4 (jalankan di grup)\n\n*📌 Manajemen Pendaftaran:*\n✦ *.monitor* — Jadikan grup ini sebagai monitor group\n✦ *.pendingapply* — Lihat antrian peserta yang menunggu di-apply\n✦ *.setapikey [key]* — Ganti API key bot\n\n*📌 Utilitas:*\n✦ *.helptur* — Tampilkan menu ini (hanya di grup monitor)\n✦ *.testur* — Simulasi grup penuh & kirim 3 pesan tes (jalankan di dalam grup turnamen)\n\n📋 Semua command *khusus owner* & sebagian hanya di grup yang relevan.`;
 await m.reply(helpText);
 }
 break
@@ -1124,20 +1124,17 @@ break
 // Tes Auto Pesan Turnamen (owner, monitor group only)
 case 'testur': {
 if (!isCreator) return m.reply(global.mess.owner);
-if (!m.isGroup) return m.reply('Perintah ini hanya bisa digunakan di dalam grup!');
-if (m.chat !== set.monitorGroup) return m.reply('Perintah ini hanya bisa digunakan di grup *Monitor*!\nSet dulu dengan: *.monitor*');
+if (!m.isGroup) return m.reply('Perintah ini hanya bisa digunakan di dalam grup turnamen!');
 if (!set.tournamentGroups || set.tournamentGroups.length === 0) return m.reply('Belum ada grup turnamen yang terdaftar.\nTambahkan dulu dengan: *.addgrub [nama] [slot]*');
-if (!args[0]) {
-const listTes = set.tournamentGroups.map((g, i) => `${i + 1}. *${g.name}* (Slot ${g.slot}) — ${g.count}/4`).join('\n');
-return m.reply(`*🧪 Pilih grup untuk tes:*\n\n${listTes}\n\nKetik: *.testur [nomor]*`);
-}
-const tesIdx = parseInt(args[0]) - 1;
-if (isNaN(tesIdx) || tesIdx < 0 || tesIdx >= set.tournamentGroups.length) return m.reply(`Nomor tidak valid! Pilih 1 - ${set.tournamentGroups.length}`);
-const tesGrup = set.tournamentGroups[tesIdx];
+const tesGrupIdx = set.tournamentGroups.findIndex(g => g.jid === m.chat);
+if (tesGrupIdx === -1) return m.reply('Grup ini tidak terdaftar sebagai grup turnamen.\nDaftarkan dulu dengan: *.addgrub [nama] [slot]* (jalankan di dalam grup ini)');
+const tesGrup = set.tournamentGroups[tesGrupIdx];
 const botJid = naze.decodeJid(naze.user.id);
-let pesertaTes = [...(tesGrup.participants || [])];
 const ownerJidsTes = global.owner.map(o => o + '@s.whatsapp.net');
+// Gunakan peserta asli kalau ada, sisanya pakai owner sebagai dummy
+let pesertaTes = [...(tesGrup.participants || [])];
 while (pesertaTes.length < 4) pesertaTes.push(ownerJidsTes[pesertaTes.length % ownerJidsTes.length] || botJid);
+// Acak urutan matchup
 for (let i = pesertaTes.length - 1; i > 0; i--) {
 const j = Math.floor(Math.random() * (i + 1));
 [pesertaTes[i], pesertaTes[j]] = [pesertaTes[j], pesertaTes[i]];
@@ -1148,14 +1145,15 @@ const rulesMsgT = `*RULES*‼️\n•HTTPS (HAYATO, CAROLIN, KELLY, ALOK)\n•NO
 const matchupMsgT = `@${tp1.split('@')[0]} vs @${tp2.split('@')[0]}\n@${tp3.split('@')[0]} vs @${tp4.split('@')[0]}`;
 const ownerMentionsT = ownerJidsTes;
 const ownerMsgT = `Jika ada Kendala Tag owner\n${ownerMentionsT.map(o => '@' + o.split('@')[0]).join(' ')}`;
-await m.reply(`🧪 *[TES]* Mengirim 3 pesan ke grup *${tesGrup.name}*...`);
+await m.reply(`🧪 *[TES]* Simulasi grup *${tesGrup.name}* penuh — mengirim 3 pesan...\n\n_Data asli tidak berubah. Gunakan .resettur untuk reset slot._`);
 await sleep(800);
-await naze.sendMessage(tesGrup.jid, { text: `🧪 *[TES]*\n` + rulesMsgT });
+await naze.sendMessage(m.chat, { text: `🧪 *[TES]*\n` + rulesMsgT });
 await sleep(800);
-await naze.sendMessage(tesGrup.jid, { text: `🧪 *[TES]*\n` + matchupMsgT, mentions: [tp1, tp2, tp3, tp4] });
+await naze.sendMessage(m.chat, { text: `🧪 *[TES]*\n` + matchupMsgT, mentions: [tp1, tp2, tp3, tp4] });
 await sleep(800);
-await naze.sendMessage(tesGrup.jid, { text: `🧪 *[TES]*\n` + ownerMsgT, mentions: ownerMentionsT });
-await m.reply(`✅ Tes selesai! 3 pesan dikirim ke grup *${tesGrup.name}*.`);
+await naze.sendMessage(m.chat, { text: `🧪 *[TES]*\n` + ownerMsgT, mentions: ownerMentionsT });
+await sleep(500);
+await m.reply(`✅ Tes selesai! Cek apakah 3 pesan sudah sesuai.\n\nKetik *.resettur* di sini jika ingin reset slot kembali ke 0/4.`);
 }
 break
 

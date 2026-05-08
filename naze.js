@@ -697,9 +697,7 @@ const naze = async (naze, m, msg, store) => {
 						text: `✅ Pendaftaran @${userJid.split('@')[0]} berhasil di-ACC.\nSlot: *${data.pilihan}* | A.n: *${data.name}*\n\nBalas pesan ini dengan *apply* untuk memasukkan ke grup.`,
 						mentions: [userJid]
 					}, { quoted: m });
-					if (sentAcc?.key?.id) {
-						pendingApply[sentAcc.key.id] = { senderJid: userJid, pilihan: data.pilihan, name: data.name };
-					}
+					pendingApply[m.sender] = { senderJid: userJid, pilihan: data.pilihan, name: data.name };
 				} else {
 					await naze.sendMessage(userJid, { text: `❌ *Pendaftaran Turnamen Ditolak*\nSlot: *${data.pilihan}*\n\nBukti transfer tidak valid atau bermasalah.\nSilahkan ketik *daftar* lagi dan kirim bukti yang benar.` });
 					await m.reply(`❌ Pendaftaran @${userJid.split('@')[0]} ditolak.\nUser sudah diberitahu.`, { mentions: [userJid] });
@@ -711,9 +709,9 @@ const naze = async (naze, m, msg, store) => {
 
 
 		// APPLY handler - owner reply "apply" ke pesan ACC
-		const isApplyReply = isCreator && m.quoted && pendingApply[m.quoted.id] && (body || '').trim().toLowerCase() === 'apply';
+		const isApplyReply = isCreator && pendingApply[m.sender] && (body || '').trim().toLowerCase() === 'apply';
 		if (isApplyReply) {
-			const applyData = pendingApply[m.quoted.id];
+			const applyData = pendingApply[m.sender];
 			const slot = applyData.pilihan;
 			const grupsSlot = set.tournamentGroups.filter(g => g.slot === slot);
 			if (grupsSlot.length === 0) {
@@ -740,7 +738,7 @@ Pendaftar: @${applyData.senderJid.split('@')[0]} (A.n: ${applyData.name})
 				chat: m.chat,
 				quotedMsgId: m.quoted.id
 			};
-			delete pendingApply[m.quoted.id];
+			delete pendingApply[m.sender];
 			return;
 		}
 
@@ -854,12 +852,12 @@ Error: ${e?.message || e}`);
 					fs.writeFileSync(tmpPath, imgBuf);
 					sesi.imagePath = tmpPath;
 					const cap = (m.msg?.caption || '').trim();
-					if (cap && /^(a\.?n\.?\s*\w+|\w{2,30})$/i.test(cap)) sesi.name = cap;
+					if (cap && /^[a-zA-Z\u00C0-\u024F][a-zA-Z\u00C0-\u024F\s'\.]{0,48}$/.test(cap)) sesi.name = cap.replace(/^a\.?n\.?\s*/i, '').trim();
 				}
 
 				// Terima nama dari teks biasa
 				if ((m.type === 'conversation' || m.type === 'extendedTextMessage') && !m.isMedia) {
-					if (/^(a\.?n\.?\s*\w+|\w{2,30})$/i.test(bodyTrim)) sesi.name = bodyTrim;
+					if (/^[a-zA-Z\u00C0-\u024F][a-zA-Z\u00C0-\u024F\s'\.]{0,48}$/.test(bodyTrim)) sesi.name = bodyTrim.replace(/^a\.?n\.?\s*/i, '').trim();
 				}
 
 				// Jika keduanya sudah diterima → forward ke grup monitor

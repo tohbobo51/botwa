@@ -102,6 +102,8 @@ const naze = async (naze, m, msg, store) => {
 	let proofQueue = db.game.proofQueue;
 	if (db.game.activeProof === undefined) db.game.activeProof = null;
 	if (!set.tournamentGroups) set.tournamentGroups = [];
+	if (set.tournamentOpen === undefined) set.tournamentOpen = true;
+	if (!set.slotOpen) set.slotOpen = { '11': true, '33': true, '44': true };
 	if (!global.tournamentTimers) global.tournamentTimers = {};
 	if (!global.pendingJoinTimers) global.pendingJoinTimers = {};
 	// Migrasi & cleanup: pastikan setiap grup punya joined/pendingJoin, dan hapus invite expired
@@ -853,24 +855,38 @@ try {
 	}
 	_wasAdded = true;
 } catch (_eAdd) {
-	// Kirim undangan pribadi WhatsApp (bukan sekadar link teks)
+	// Kirim undangan: coba groupInviteMessage dulu, fallback ke link teks
 	try {
 		const _invCode = await naze.groupInviteCode(grup.jid);
 		const _grpMeta = await naze.groupMetadata(grup.jid).catch(() => ({ subject: grup.name }));
-		await naze.sendMessage(sesiApply.senderJid, {
-			groupInviteMessage: {
-				inviteCode: _invCode,
-				inviteExpiration: Math.floor(Date.now() / 1000) + 600, // 10 menit
-				groupJid: grup.jid,
-				groupName: _grpMeta.subject || grup.name,
-				caption: `✅ Pendaftaran kamu telah diverifikasi admin!\nSilahkan klik tombol di bawah untuk bergabung ke grup turnamen slot *${sesiApply.pilihan}*.\n\n⚠️ Undangan berlaku *10 menit*. Segera klik!`
-			}
-		});
-		const _errNote = _eAdd?.isPrivacy ? 'nomor bot belum disave di kontak mereka' : `Error: ${_eAdd?.message || _eAdd}`;
-		await m.reply(`⚠️ @${sesiApply.senderJid.split('@')[0]} tidak bisa langsung ditambahkan (${_errNote}).\n\n✅ *Undangan pribadi WhatsApp sudah dikirim ke DM mereka.*\nGrup: *${grup.name}* | Slot: *${sesiApply.pilihan}*\n\n⏳ Peserta punya *10 menit* untuk klik undangan.\n_3 pesan otomatis hanya terkirim saat semua 4 orang benar-benar join._`, { mentions: [sesiApply.senderJid] });
-		_wasInvited = true;
+		let _invSent = false;
+		// Coba kirim sebagai kartu undangan grup
+		try {
+			await naze.sendMessage(sesiApply.senderJid, {
+				groupInviteMessage: {
+					inviteCode: _invCode,
+					inviteExpiration: Math.floor(Date.now() / 1000) + 600,
+					groupJid: grup.jid,
+					groupName: _grpMeta.subject || grup.name,
+					caption: `✅ Kamu telah diterima! Klik *Join Group* untuk masuk ke grup turnamen slot *${sesiApply.pilihan}*.\n\n⚠️ Berlaku *10 menit* — segera klik!`
+				}
+			});
+			_invSent = true;
+		} catch (_eCard) {
+			// Fallback: link teks biasa
+			await naze.sendMessage(sesiApply.senderJid, {
+				text: `✅ Pendaftaran kamu diterima admin!\n\nKlik link berikut untuk masuk grup turnamen slot *${sesiApply.pilihan}*:\nhttps://chat.whatsapp.com/${_invCode}\n\n⚠️ Link berlaku *10 menit* — segera klik!`
+			});
+			_invSent = true;
+		}
+		if (_invSent) {
+			const _errNote = _eAdd?.isPrivacy ? 'nomor bot belum disave' : `gagal direct-add`;
+			await m.reply(`⚠️ @${sesiApply.senderJid.split('@')[0]} tidak bisa langsung ditambahkan (${_errNote}).\n\n✅ *Undangan sudah dikirim ke DM mereka.*\nGrup: *${grup.name}* | Slot: *${sesiApply.pilihan}*\n\n⏳ Peserta punya *10 menit* untuk klik undangan.\n_3 pesan otomatis hanya terkirim saat semua 4 orang benar-benar join._`, { mentions: [sesiApply.senderJid] });
+			_wasInvited = true;
+		}
 	} catch (_eInv) {
-		await m.reply(`❌ Gagal add user dan gagal kirim undangan pribadi.\nGrup: *${grup.name}*\nError: ${_eAdd?.message || _eAdd}`);
+		// Bahkan groupInviteCode gagal (bot bukan admin grup?)
+		await m.reply(`❌ Gagal add & gagal buat undangan.\n*Pastikan bot adalah admin grup ${grup.name}!*\nError: ${_eAdd?.message || _eAdd}\nInvite error: ${_eInv?.message || _eInv}`);
 	}
 }
 // Update data slot
@@ -977,9 +993,14 @@ if (_wasAdded) {
 					}
 					return;
 				}
+				// Cek apakah pendaftaran global ditutup
+				if (set.tournamentOpen === false) {
+					return m.reply('⛔ *Pendaftaran turnamen sedang ditutup.*\nHubungi admin untuk informasi lebih lanjut.');
+				}
 				tournament[m.sender] = { state: 'waiting_choice', pilihan: null, imagePath: null, name: null, time: Date.now() };
 				if (global.tournamentTimers[m.sender]) clearTimeout(global.tournamentTimers[m.sender]);
-				await m.reply('Halo! Pilih slot turnamen kamu:\n\n*11* - Slot 11\n*33* - Slot 33\n*44* - Slot 44\n\nBalas dengan angka pilihanmu.');
+				const _botNumWarn = naze.user?.id?.split(':')[0] || naze.user?.id?.split('@')[0] || 'bot';
+				await m.reply(`⚠️ *PENTING SEBELUM MENDAFTAR!*\n\nSimpan nomor bot ini ke kontakmu:\n*+${_botNumWarn}*\n\n_Jika nomor bot tidak disimpan, kamu tidak bisa langsung dimasukkan ke grup turnamen._\n\n⏳ Setelah simpan, pilih slot turnamen:\n*11* - Slot 11\n*33* - Slot 33\n*44* - Slot 44\n\nBalas dengan angka pilihanmu.`);
 				return;
 			}
 
@@ -987,6 +1008,12 @@ if (_wasAdded) {
 			if (tournament[m.sender]?.state === 'waiting_choice') {
 				if (/^(11|33|44)$/.test(bodyTrim)) {
 					const pilihan = bodyTrim;
+					// Cek apakah slot ini ditutup
+					if (set.slotOpen?.[pilihan] === false) {
+						delete tournament[m.sender];
+						if (global.tournamentTimers[m.sender]) { clearTimeout(global.tournamentTimers[m.sender]); delete global.tournamentTimers[m.sender]; }
+						return m.reply(`⛔ *Slot ${pilihan} sedang ditutup sementara.*\nSilahkan pilih slot lain atau hubungi admin.`);
+					}
 					tournament[m.sender].state = 'waiting_payment';
 					tournament[m.sender].pilihan = pilihan;
 					tournament[m.sender].imagePath = null;
@@ -1182,6 +1209,27 @@ if (_wasAdded) {
 			break
 
 			// List semua grup turnamen
+			case 'tutup':
+			case 'buka': {
+				if (!isCreator) return m.reply(global.mess.owner);
+				const _tbCmd = command.toLowerCase();
+				const _tbArg = (args[0] || '').trim().toLowerCase();
+				const _tbOpen = _tbCmd === 'buka';
+				const _tbIcon = _tbOpen ? '✅' : '⛔';
+				const _tbStatus = _tbOpen ? 'DIBUKA' : 'DITUTUP';
+				if (!_tbArg || _tbArg === 'daftar') {
+					set.tournamentOpen = _tbOpen;
+					await m.reply(`${_tbIcon} *Pendaftaran turnamen ${_tbStatus}.*\n${_tbOpen ? 'Peserta sekarang bisa ketik *daftar* untuk mendaftar.' : 'Tidak ada peserta baru yang bisa mendaftar sampai dibuka kembali.'}`);
+				} else if (['11','33','44'].includes(_tbArg)) {
+					if (!set.slotOpen) set.slotOpen = { '11': true, '33': true, '44': true };
+					set.slotOpen[_tbArg] = _tbOpen;
+					await m.reply(`${_tbIcon} *Slot ${_tbArg} ${_tbStatus}.*\n${_tbOpen ? `Peserta bisa memilih slot ${_tbArg} saat mendaftar.` : `Slot ${_tbArg} tidak tersedia untuk pendaftar baru.`}`);
+				} else {
+					await m.reply(`Format salah!\n\nCara penggunaan:\n• *.tutup daftar* — tutup semua pendaftaran\n• *.buka daftar* — buka semua pendaftaran\n• *.tutup 11* — tutup slot 11\n• *.buka 33* — buka slot 33\n• *.tutup 44* — tutup slot 44`);
+				}
+				break;
+			}
+
 			case 'listgrub': {
 				if (!isCreator) return m.reply(global.mess.owner);
 				if (!set.tournamentGroups || set.tournamentGroups.length === 0) return m.reply('Belum ada grup turnamen yang terdaftar.\nTambahkan dengan: *.addgrub [nama] [slot]*');
@@ -1291,7 +1339,9 @@ case 'helptur': {
 if (!isCreator) return m.reply(global.mess.owner);
 if (!m.isGroup) return m.reply('Perintah ini hanya bisa digunakan di dalam grup!');
 if (m.chat !== set.monitorGroup) return m.reply('Perintah ini hanya bisa digunakan di grup *Monitor*!\nSet dulu dengan: *.monitor*');
-const helpText = `╔════════════════════╗\n║   *🏆 HELP TURNAMEN*   ║\n╚════════════════════╝\n\n*📌 Manajemen Grup:*\n✦ *.addgrub [nama] [slot]* — Daftarkan grup turnamen (jalankan di dalam grup)\n✦ *.listgrub* — Lihat semua grup terdaftar beserta status slot\n✦ *.delgrub [nomor]* — Hapus grup dari daftar\n✦ *.resettur* — Kick peserta biasa & reset slot ke 0/4 (jalankan di grup)\n\n*📌 Manajemen Pendaftaran:*\n✦ *.monitor* — Jadikan grup ini sebagai monitor group\n✦ *.pending* — Lihat status antrian bukti transfer (aktif & menunggu)
+const helpText = `╔════════════════════╗\n║   *🏆 HELP TURNAMEN*   ║\n╚════════════════════╝\n\n*📌 Manajemen Grup:*\n✦ *.addgrub [nama] [slot]* — Daftarkan grup turnamen (jalankan di dalam grup)\n❖ *.tutup daftar* / *.buka daftar* — Tutup/buka pendaftaran turnamen
+❖ *.tutup [11/33/44]* / *.buka [11/33/44]* — Tutup/buka slot tertentu
+❖ *.listgrub* — Lihat semua grup terdaftar beserta status slot\n✦ *.delgrub [nomor]* — Hapus grup dari daftar\n✦ *.resettur* — Kick peserta biasa & reset slot ke 0/4 (jalankan di grup)\n\n*📌 Manajemen Pendaftaran:*\n✦ *.monitor* — Jadikan grup ini sebagai monitor group\n✦ *.pending* — Lihat status antrian bukti transfer (aktif & menunggu)
 ✦ _Pilih grup: reply ke pesan daftar grup yang dikirim bot dengan nomor_\n✦ *.setapikey [key]* — Ganti API key bot\n\n*📌 Utilitas:*\n✦ *.helptur* — Tampilkan menu ini (hanya di grup monitor)\n✦ *.testur* — Simulasi grup penuh & kirim 3 pesan tes (jalankan di dalam grup turnamen)\n\n📋 Semua command *khusus owner* & sebagian hanya di grup yang relevan.`;
 await m.reply(helpText);
 }

@@ -137,6 +137,68 @@ async function GroupParticipantsUpdate(naze, update, store) {
 				}
 				let messageText;
 				if (action === 'add') {
+					// ── TOURNAMENT: deteksi peserta pending invite yang akhirnya join ──
+					if (global.db?.set) {
+						for (const [_botNum, _setData] of Object.entries(global.db.set)) {
+							if (!_setData?.tournamentGroups) continue;
+							const _tGrpIdx = _setData.tournamentGroups.findIndex(g => g.jid === id);
+							if (_tGrpIdx < 0) continue;
+							const _tGrp = _setData.tournamentGroups[_tGrpIdx];
+							if (!_tGrp.pendingJoin?.length) continue;
+							for (const _pPart of participants) {
+								const _pJidStr = typeof _pPart === 'string' ? _pPart : (_pPart?.phoneNumber || _pPart?.id || '');
+								const _pIdx = _tGrp.pendingJoin.findIndex(p => jidNormalizedUser(p.senderJid) === jidNormalizedUser(_pJidStr));
+								if (_pIdx < 0) continue;
+								const _pItem = _tGrp.pendingJoin[_pIdx];
+								const _tKey = id + ':' + _pItem.senderJid;
+								if (global.pendingJoinTimers?.[_tKey]) { clearTimeout(global.pendingJoinTimers[_tKey]); delete global.pendingJoinTimers[_tKey]; }
+								// Cek apakah invite masih valid (belum expired)
+								if (_pItem.expireAt < Date.now()) {
+									// Expired: kick dan buka slot
+									try { await naze.groupParticipantsUpdate(id, [_pJidStr], 'remove'); } catch {}
+									_tGrp.pendingJoin.splice(_pIdx, 1);
+									_tGrp.count = (_tGrp.joined?.length || 0) + _tGrp.pendingJoin.length;
+									const _monExpired = _setData.monitorGroup;
+									if (_monExpired) await naze.sendMessage(_monExpired, { text: `⚠️ Invite expired: @${_pJidStr.split('@')[0]} join grup *${_tGrp.name}* tapi undangan sudah kadaluarsa. Auto-kick dilakukan. Slot dibuka kembali.`, mentions: [_pJidStr] }).catch(() => {});
+									continue;
+								}
+								// Valid join: pindahkan dari pendingJoin ke joined
+								_tGrp.pendingJoin.splice(_pIdx, 1);
+								if (!_tGrp.joined) _tGrp.joined = [];
+								_tGrp.joined.push(_pJidStr);
+								if (!_tGrp.participants) _tGrp.participants = [];
+								_tGrp.participants.push(_pJidStr);
+								_tGrp.count = _tGrp.joined.length + _tGrp.pendingJoin.length;
+								const _joinedCount = _tGrp.joined.length;
+								const _monJoin = _setData.monitorGroup;
+								if (_monJoin) {
+									await naze.sendMessage(_monJoin, { text: `✅ @${_pJidStr.split('@')[0]} telah join grup *${_tGrp.name}* via undangan pribadi!\nJoined: *${_joinedCount}/4* | Pending: *${_tGrp.pendingJoin.length}* | Total: *${_tGrp.count}/4*`, mentions: [_pJidStr] }).catch(() => {});
+								}
+								// Kirim 3 pesan otomatis HANYA jika joined sudah 4 orang
+								if (_joinedCount >= 4) {
+									const _peserta = [..._tGrp.joined];
+									for (let _i = _peserta.length - 1; _i > 0; _i--) {
+										const _j = Math.floor(Math.random() * (_i + 1));
+										[_peserta[_i], _peserta[_j]] = [_peserta[_j], _peserta[_i]];
+									}
+									const _toJ = _x => _x.endsWith('@s.whatsapp.net') ? _x : _x + '@s.whatsapp.net';
+									const _p1=_toJ(_peserta[0]||''),_p2=_toJ(_peserta[1]||''),_p3=_toJ(_peserta[2]||''),_p4=_toJ(_peserta[3]||'');
+									const _rMsg = `*RULES*‼️\n•HTTPS (HAYATO, CAROLIN, KELLY, ALOK)\n•NO SS00 (LVL DIBAWAH 20SS)\n•BOLE N ANIMASI 22/33/44\n•SG2 ONLY\n•NO ATAP (LANTAI 2)\n•NO CHAR CEWE\n•NO BUNDLE BALAP/BENCONG\n•NO SEPATU LONCAT ATAU TERBANG\n•NO DMG TINJU/USP\n•ALL SKIN\n•00 NO VEST GLOWAL\n•11 NO ZONA\n•33/44 BOLEH ZONA\n•BATAS OPR 10MNT!!!\n•NGARET MASUK 15MNT!!!\n *LANGGAR? DISS*`;
+									const _mMsg = `@${_p1.split('@')[0]} vs @${_p2.split('@')[0]}\n@${_p3.split('@')[0]} vs @${_p4.split('@')[0]}`;
+									const _owM = global.owner.map(o => o + '@s.whatsapp.net');
+									const _oMsg = `Jika ada Kendala Tag owner\n${_owM.map(o => '@' + o.split('@')[0]).join(' ')}`;
+									await new Promise(r => setTimeout(r, 1000));
+									await naze.sendMessage(id, { text: _rMsg }).catch(() => {});
+									await new Promise(r => setTimeout(r, 1000));
+									await naze.sendMessage(id, { text: _mMsg, mentions: [_p1,_p2,_p3,_p4] }).catch(() => {});
+									await new Promise(r => setTimeout(r, 1000));
+									await naze.sendMessage(id, { text: _oMsg, mentions: _owM }).catch(() => {});
+									if (_monJoin) await naze.sendMessage(_monJoin, { text: `🏆 Grup *${_tGrp.name}* slot *${_tGrp.slot}* FULL! Semua 4 peserta sudah join. 3 pesan otomatis dikirim.` }).catch(() => {});
+								}
+							}
+							break;
+						}
+					}
 					if (global.db.groups[id]?.welcome) messageText = global.db.groups[id]?.text?.setwelcome || `Welcome to ${metadata.subject}\n@`;
 					if (!participant) {
 						clearTimeout(groupMetadataTimers[id])

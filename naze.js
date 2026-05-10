@@ -1038,49 +1038,58 @@ if (_wasAdded) {
 			) {
 				_psbState.used = true; // 1x percobaan saja, langsung tandai
 				try {
-					// Ambil invite code baru (lebih segar)
-					const _rInvCode = await naze.groupInviteCode(_psbState.grupJid).catch(() => _psbState.inviteCode);
-					const _rMeta = await naze.groupMetadata(_psbState.grupJid).catch(() => ({ subject: _psbState.grupName }));
-					let _rThumb = null;
-					try {
-						const _rThumbUrl = await naze.profilePictureUrl(_psbState.grupJid, 'image').catch(() => null);
-						if (_rThumbUrl) _rThumb = await getBuffer(_rThumbUrl).catch(() => null);
-					} catch (_) {}
-					const _rPayload = {
-						inviteCode: _rInvCode,
-						inviteExpiration: Math.floor(Date.now() / 1000) + 1200,
-						groupJid: _psbState.grupJid,
-						groupName: _rMeta.subject || _psbState.grupName,
-						caption: `✅ Terima kasih sudah menyimpan nomor bot!\n\nKlik *Join Group* untuk masuk ke grup turnamen slot *${_psbState.pilihan}*.\n\n⚠️ Berlaku *20 menit* — segera klik!`
-					};
-					if (_rThumb) _rPayload.jpegThumbnail = _rThumb;
-					await naze.sendMessage(m.sender, { groupInviteMessage: _rPayload });
-					// Notif ke grup monitor
-					if (set.monitorGroup) {
-						await naze.sendMessage(set.monitorGroup, {
-							text: `✅ *@${m.sender.split('@')[0]} sudah simpan nomor bot!*\nKartu undangan berhasil dikirim ulang.\nGrup: *${_psbState.grupName}* | Slot: *${_psbState.pilihan}*`,
-							mentions: [m.sender]
-						}).catch(() => {});
+					// Retry: coba direct add (groupParticipantsUpdate), bukan kirim undangan lagi
+					const _rAddRes = await naze.groupParticipantsUpdate(_psbState.grupJid, [m.sender], 'add');
+					const _rStat = _rAddRes?.[0]?.status;
+					if (_rStat === 403 || _rStat === '403') {
+						throw Object.assign(new Error('Masih 403 - privasi kontak'), { isPrivacy: true });
 					}
-					// Pastikan slot masih reserved (tambah ke pendingJoin jika belum)
-					const _rGi = set.tournamentGroups?.findIndex(g => g.jid === _psbState.grupJid);
-					if (_rGi >= 0) {
-						if (!set.tournamentGroups[_rGi].pendingJoin) set.tournamentGroups[_rGi].pendingJoin = [];
-						const alreadyPending = set.tournamentGroups[_rGi].pendingJoin.some(p => p.senderJid === m.sender);
-						if (!alreadyPending) {
-							const _rExpireAt = Date.now() + 20 * 60 * 1000;
-							set.tournamentGroups[_rGi].pendingJoin.push({ senderJid: m.sender, invitedAt: Date.now(), expireAt: _rExpireAt });
-							set.tournamentGroups[_rGi].count = (set.tournamentGroups[_rGi].joined?.length || 0) + set.tournamentGroups[_rGi].pendingJoin.length;
+					// Direct add berhasil!
+					const _rGiOk = set.tournamentGroups?.findIndex(g => g.jid === _psbState.grupJid);
+					if (_rGiOk >= 0) {
+						if (!set.tournamentGroups[_rGiOk].joined) set.tournamentGroups[_rGiOk].joined = [];
+						if (!set.tournamentGroups[_rGiOk].joined.includes(m.sender)) {
+							set.tournamentGroups[_rGiOk].joined.push(m.sender);
+							if (!set.tournamentGroups[_rGiOk].participants) set.tournamentGroups[_rGiOk].participants = [];
+							set.tournamentGroups[_rGiOk].participants.push(m.sender);
+						}
+						// Hapus dari pendingJoin jika ada
+						set.tournamentGroups[_rGiOk].pendingJoin = (set.tournamentGroups[_rGiOk].pendingJoin || []).filter(p => p.senderJid !== m.sender);
+						set.tournamentGroups[_rGiOk].count = set.tournamentGroups[_rGiOk].joined.length + set.tournamentGroups[_rGiOk].pendingJoin.length;
+						const _rJoined = set.tournamentGroups[_rGiOk].joined.length;
+						if (set.monitorGroup) {
+							await naze.sendMessage(set.monitorGroup, {
+								text: `✅ *@${m.sender.split('@')[0]} berhasil dimasukkan ke grup!*\nGrup: *${_psbState.grupName}* | Slot: *${_psbState.pilihan}* | Joined: ${_rJoined}/4`,
+								mentions: [m.sender]
+							}).catch(() => {});
+						}
+						await naze.sendMessage(m.sender, {
+							text: `✅ Kamu sudah berhasil masuk ke grup turnamen!\nGrup: *${_psbState.grupName}*\nSlot: *${_psbState.pilihan}*\n\nCek grup WhatsApp kamu!`
+						}).catch(() => {});
+						// 3 pesan otomatis jika sudah 4 joined
+						if (_rJoined >= 4) {
+							const _rPeserta = [...(set.tournamentGroups[_rGiOk].joined || [])];
+							for (let i = _rPeserta.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [_rPeserta[i], _rPeserta[j]] = [_rPeserta[j], _rPeserta[i]]; }
+							const toJid = jid => jid.endsWith('@s.whatsapp.net') ? jid : jid + '@s.whatsapp.net';
+							const rp1 = toJid(_rPeserta[0]||''), rp2 = toJid(_rPeserta[1]||''), rp3 = toJid(_rPeserta[2]||''), rp4 = toJid(_rPeserta[3]||'');
+							const rulesMsg = `*RULES*‼️\n•HTTPS (HAYATO, CAROLIN, KELLY, ALOK)\n•NO SS00 (LVL DIBAWAH 20SS)\n•BOLE N ANIMASI 22/33/44\n•SG2 ONLY\n•NO ATAP (LANTAI 2)\n•NO CHAR CEWE\n•NO BUNDLE BALAP/BENCONG\n•NO SEPATU LONCAT ATAU TERBANG\n•NO DMG TINJU/USP\n•ALL SKIN\n•00 NO VEST GLOWAL\n•11 NO ZONA\n•33/44 BOLEH ZONA\n•BATAS OPR 10MNT!!!\n•NGARET MASUK 15MNT!!!\n *LANGGAR? DISS*`;
+							const matchupMsg = `@${rp1.split('@')[0]} vs @${rp2.split('@')[0]}\n@${rp3.split('@')[0]} vs @${rp4.split('@')[0]}`;
+							const ownerMentions = global.owner.map(o => o + '@s.whatsapp.net');
+							const ownerMsg = `Jika ada Kendala Tag owner\n${ownerMentions.map(o => '@' + o.split('@')[0]).join(' ')}`;
+							await sleep(1000); await naze.sendMessage(_psbState.grupJid, { text: rulesMsg });
+							await sleep(1000); await naze.sendMessage(_psbState.grupJid, { text: matchupMsg, mentions: [rp1,rp2,rp3,rp4] });
+							await sleep(1000); await naze.sendMessage(_psbState.grupJid, { text: ownerMsg, mentions: ownerMentions });
+							if (set.monitorGroup) await naze.sendMessage(set.monitorGroup, { text: `🏆 Grup *${_psbState.grupName}* slot *${_psbState.pilihan}* FULL! Semua 4 peserta sudah join.` });
 						}
 					}
 				} catch (_rErr) {
-					// Kartu undangan tetap gagal
+					// Direct add tetap gagal
 					await naze.sendMessage(m.sender, {
-						text: `❌ Maaf, kartu undangan masih gagal dikirim.\nHubungi admin untuk dimasukkan secara manual.`
+						text: `❌ Maaf, gagal memasukkan kamu ke grup.\nMohon hubungi admin untuk dimasukkan secara manual.`
 					}).catch(() => {});
 					if (set.monitorGroup) {
 						await naze.sendMessage(set.monitorGroup, {
-							text: `❌ Kartu undangan tetap gagal ke @${m.sender.split('@')[0]} meski sudah sv nomor.\nGrup: *${_psbState.grupName}* | Slot: *${_psbState.pilihan}*\nTambahkan manual.`,
+							text: `❌ Gagal direct-add @${m.sender.split('@')[0]} meski sudah sv nomor.\nGrup: *${_psbState.grupName}* | Slot: *${_psbState.pilihan}*\nError: ${_rErr?.message || _rErr}\nTambahkan manual.`,
 							mentions: [m.sender]
 						}).catch(() => {});
 					}

@@ -312,13 +312,7 @@ const naze = async (naze, m, msg, store) => {
 		if (m.isBot) return
 		if (db.users[m.sender]?.ban && !isCreator) return
 		
-		// Filter Set Api Key
-		if (cases.includes(command) && isCmd && (command !== 'setapikey' && command !== 'monitor' && command !== 'addgrub' && command !== 'listgrub' && command !== 'delgrub' && command !== 'pending' && command !== 'resettur' && command !== 'helptur' && command !== 'testur')) {
-			const currentKey = global.APIKeys[global.APIs.naze];
-			if (currentKey === 'YOUR_API_KEY' || !currentKey.startsWith('nz-')) {
-				return m.reply('Silahkan Ganti Apikey yang ada\ndi File settings.js dengan apikey mu\nAgar semua fitur bisa digunakan dengan normal\n\nAmbil Key di : https://naze.biz.id/profile\nKemudian Gunakan Perintah\n.setapikey key_nya');
-			}
-		}
+		// [API Key filter dihapus - bot bisa digunakan tanpa apikey]
 		
 		// Mengetik & Anti Spam & Hit
 		if (naze.public && isCmd) {
@@ -855,33 +849,37 @@ try {
 	}
 	_wasAdded = true;
 } catch (_eAdd) {
-	// Kirim undangan: coba groupInviteMessage dulu, fallback ke link teks
+	// Kirim undangan pribadi via kartu groupInviteMessage
 	try {
 		const _invCode = await naze.groupInviteCode(grup.jid);
-		const _grpMeta = await naze.groupMetadata(grup.jid).catch(() => ({ subject: grup.name }));
+		const _grpMeta = await naze.groupMetadata(grup.jid).catch(() => ({ subject: grup.name, id: grup.jid }));
 		let _invSent = false;
-		// Coba kirim sebagai kartu undangan grup
+		// Ambil foto profil grup sebagai thumbnail (opsional)
+		let _grpThumb = null;
+		try { _grpThumb = await naze.profilePictureUrl(grup.jid, 'image'); } catch (_) {}
+		// Kirim sebagai kartu undangan grup
 		try {
+			const _invPayload = {
+				inviteCode: _invCode,
+				inviteExpiration: Math.floor(Date.now() / 1000) + 1200,
+				groupJid: grup.jid,
+				groupName: _grpMeta.subject || grup.name,
+				caption: `✅ Kamu telah diterima! Klik *Join Group* untuk masuk ke grup turnamen slot *${sesiApply.pilihan}*.\n\n⚠️ Berlaku *20 menit* — segera klik!`
+			};
+			if (_grpThumb) _invPayload.jpegThumbnail = _grpThumb;
 			await naze.sendMessage(sesiApply.senderJid, {
-				groupInviteMessage: {
-					inviteCode: _invCode,
-					inviteExpiration: Math.floor(Date.now() / 1000) + 600,
-					groupJid: grup.jid,
-					groupName: _grpMeta.subject || grup.name,
-					caption: `✅ Kamu telah diterima! Klik *Join Group* untuk masuk ke grup turnamen slot *${sesiApply.pilihan}*.\n\n⚠️ Berlaku *10 menit* — segera klik!`
-				}
-			});
+				groupInviteMessage: _invPayload
+			})
 			_invSent = true;
 		} catch (_eCard) {
-			// Fallback: link teks biasa
-			await naze.sendMessage(sesiApply.senderJid, {
-				text: `✅ Pendaftaran kamu diterima admin!\n\nKlik link berikut untuk masuk grup turnamen slot *${sesiApply.pilihan}*:\nhttps://chat.whatsapp.com/${_invCode}\n\n⚠️ Link berlaku *10 menit* — segera klik!`
-			});
-			_invSent = true;
+			// Link teks dihapus - hanya gunakan kartu undangan grup
+			// Jika kartu gagal, laporkan ke admin dan hentikan proses
+			await m.reply(`❌ Gagal kirim kartu undangan ke @${sesiApply.senderJid.split('@')[0]}.\nError: ${_eCard?.message || _eCard}\n\nPastikan:\n1. Nomor bot disimpan peserta\n2. Bot adalah admin grup *${grup.name}*\n3. Coba lagi atau tambahkan manual`, { mentions: [sesiApply.senderJid] });
+			// _invSent tetap false, proses tidak dilanjutkan
 		}
 		if (_invSent) {
 			const _errNote = _eAdd?.isPrivacy ? 'nomor bot belum disave' : `gagal direct-add`;
-			await m.reply(`⚠️ @${sesiApply.senderJid.split('@')[0]} tidak bisa langsung ditambahkan (${_errNote}).\n\n✅ *Undangan sudah dikirim ke DM mereka.*\nGrup: *${grup.name}* | Slot: *${sesiApply.pilihan}*\n\n⏳ Peserta punya *10 menit* untuk klik undangan.\n_3 pesan otomatis hanya terkirim saat semua 4 orang benar-benar join._`, { mentions: [sesiApply.senderJid] });
+			await m.reply(`⚠️ @${sesiApply.senderJid.split('@')[0]} tidak bisa langsung ditambahkan (${_errNote}).\n\n✅ *Undangan sudah dikirim ke DM mereka.*\nGrup: *${grup.name}* | Slot: *${sesiApply.pilihan}*\n\n⏳ Peserta punya *20 menit* untuk klik undangan.\n_3 pesan otomatis hanya terkirim saat semua 4 orang benar-benar join._`, { mentions: [sesiApply.senderJid] });
 			_wasInvited = true;
 		}
 	} catch (_eInv) {
@@ -929,10 +927,10 @@ if (_wasAdded) {
 } else if (_wasInvited) {
 	// Pending invite - tambah ke pendingJoin
 	if (!set.tournamentGroups[grupIdx].pendingJoin) set.tournamentGroups[grupIdx].pendingJoin = [];
-	const _expireAt = Date.now() + 10 * 60 * 1000;
+	const _expireAt = Date.now() + 20 * 60 * 1000;
 	set.tournamentGroups[grupIdx].pendingJoin.push({ senderJid: sesiApply.senderJid, invitedAt: Date.now(), expireAt: _expireAt });
 	set.tournamentGroups[grupIdx].count = (set.tournamentGroups[grupIdx].joined?.length || 0) + set.tournamentGroups[grupIdx].pendingJoin.length;
-	// Set 10-menit timer: jika tidak join, slot dibuka kembali
+	// Set 20-menit timer: jika tidak join, slot dibuka kembali
 	const _tKey = grup.jid + ':' + sesiApply.senderJid;
 	if (global.pendingJoinTimers[_tKey]) clearTimeout(global.pendingJoinTimers[_tKey]);
 	const _snapSenderJid = sesiApply.senderJid;
@@ -947,8 +945,8 @@ if (_wasAdded) {
 			set.tournamentGroups[_gi].count = (set.tournamentGroups[_gi].joined?.length || 0) + set.tournamentGroups[_gi].pendingJoin.length;
 		}
 		if (_snapMonitor) await naze.sendMessage(_snapMonitor, { text: `⏰ *Invite expired!* @${_snapSenderJid.split('@')[0]} tidak join grup *${_snapGrupName}* dalam 10 menit.\nSlot otomatis dibuka kembali.`, mentions: [_snapSenderJid] }).catch(() => {});
-		await naze.sendMessage(_snapSenderJid, { text: `❌ Undangan grup kamu sudah kadaluarsa (10 menit).\nHubungi admin untuk proses ulang pendaftaran.` }).catch(() => {});
-	}, 10 * 60 * 1000);
+		await naze.sendMessage(_snapSenderJid, { text: `❌ Undangan grup kamu sudah kadaluarsa (20 menit).\nHubungi admin untuk proses ulang pendaftaran.` }).catch(() => {});
+	}, 20 * 60 * 1000);
 }
 				// Setelah berhasil add → clear active proof dan tampilkan antrian berikutnya
 				db.game.activeProof = null;
@@ -1208,13 +1206,16 @@ if (_wasAdded) {
 			}
 			break
 
-			// List semua grup turnamen
+			// Buka/Tutup Slot & Daftar (tutup/buka/close/open)
 			case 'tutup':
-			case 'buka': {
+			case 'buka':
+			case 'close':
+			case 'open': {
 				if (!isCreator) return m.reply(global.mess.owner);
 				const _tbCmd = command.toLowerCase();
 				const _tbArg = (args[0] || '').trim().toLowerCase();
-				const _tbOpen = _tbCmd === 'buka';
+				// Fix: 'open' dan 'buka' = buka; 'close' dan 'tutup' = tutup
+				const _tbOpen = _tbCmd === 'buka' || _tbCmd === 'open';
 				const _tbIcon = _tbOpen ? '✅' : '⛔';
 				const _tbStatus = _tbOpen ? 'DIBUKA' : 'DITUTUP';
 				if (!_tbArg || _tbArg === 'daftar') {
@@ -1225,7 +1226,7 @@ if (_wasAdded) {
 					set.slotOpen[_tbArg] = _tbOpen;
 					await m.reply(`${_tbIcon} *Slot ${_tbArg} ${_tbStatus}.*\n${_tbOpen ? `Peserta bisa memilih slot ${_tbArg} saat mendaftar.` : `Slot ${_tbArg} tidak tersedia untuk pendaftar baru.`}`);
 				} else {
-					await m.reply(`Format salah!\n\nCara penggunaan:\n• *.tutup daftar* — tutup semua pendaftaran\n• *.buka daftar* — buka semua pendaftaran\n• *.tutup 11* — tutup slot 11\n• *.buka 33* — buka slot 33\n• *.tutup 44* — tutup slot 44`);
+					await m.reply(`Format salah!\n\nCara penggunaan:\n• *.close daftar* / *.tutup daftar* — tutup semua pendaftaran\n• *.open daftar* / *.buka daftar* — buka semua pendaftaran\n• *.close 11* / *.tutup 11* — tutup slot 11\n• *.open 33* / *.buka 33* — buka slot 33\n• *.close 44* / *.tutup 44* — tutup slot 44`);
 				}
 				break;
 			}
@@ -1339,8 +1340,8 @@ case 'helptur': {
 if (!isCreator) return m.reply(global.mess.owner);
 if (!m.isGroup) return m.reply('Perintah ini hanya bisa digunakan di dalam grup!');
 if (m.chat !== set.monitorGroup) return m.reply('Perintah ini hanya bisa digunakan di grup *Monitor*!\nSet dulu dengan: *.monitor*');
-const helpText = `╔════════════════════╗\n║   *🏆 HELP TURNAMEN*   ║\n╚════════════════════╝\n\n*📌 Manajemen Grup:*\n✦ *.addgrub [nama] [slot]* — Daftarkan grup turnamen (jalankan di dalam grup)\n❖ *.tutup daftar* / *.buka daftar* — Tutup/buka pendaftaran turnamen
-❖ *.tutup [11/33/44]* / *.buka [11/33/44]* — Tutup/buka slot tertentu
+const helpText = `╔════════════════════╗\n║   *🏆 HELP TURNAMEN*   ║\n╚════════════════════╝\n\n*📌 Manajemen Grup:*\n✦ *.addgrub [nama] [slot]* — Daftarkan grup turnamen (jalankan di dalam grup)\n❖ *.close daftar* / *.open daftar* (atau *.tutup* / *.buka*) — Tutup/buka pendaftaran turnamen
+❖ *.close [11/33/44]* / *.open [11/33/44]* — Tutup/buka slot tertentu
 ❖ *.listgrub* — Lihat semua grup terdaftar beserta status slot\n✦ *.delgrub [nomor]* — Hapus grup dari daftar\n✦ *.resettur* — Kick peserta biasa & reset slot ke 0/4 (jalankan di grup)\n\n*📌 Manajemen Pendaftaran:*\n✦ *.monitor* — Jadikan grup ini sebagai monitor group\n✦ *.pending* — Lihat status antrian bukti transfer (aktif & menunggu)
 ✦ _Pilih grup: reply ke pesan daftar grup yang dikirim bot dengan nomor_\n✦ *.setapikey [key]* — Ganti API key bot\n\n*📌 Utilitas:*\n✦ *.helptur* — Tampilkan menu ini (hanya di grup monitor)\n✦ *.testur* — Simulasi grup penuh & kirim 3 pesan tes (jalankan di dalam grup turnamen)\n\n📋 Semua command *khusus owner* & sebagian hanya di grup yang relevan.`;
 await m.reply(helpText);

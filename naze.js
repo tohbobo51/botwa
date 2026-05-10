@@ -96,6 +96,8 @@ const naze = async (naze, m, msg, store) => {
 	let monitorMap = db.game.monitorMap;
 	if (!db.game.pendingApply) db.game.pendingApply = {};
 	let pendingApply = db.game.pendingApply;
+	if (!db.game.pendingSaveBot) db.game.pendingSaveBot = {};
+	let pendingSaveBot = db.game.pendingSaveBot;
 	if (!db.game.applySession) db.game.applySession = {};
 	let applySession = db.game.applySession;
 	if (!db.game.proofQueue) db.game.proofQueue = [];
@@ -716,17 +718,27 @@ const grupsSlotAcc = set.tournamentGroups ? set.tournamentGroups.filter(g => g.s
 if (grupsSlotAcc.length === 0) {
 await m.reply(`✅ @${userJid.split('@')[0]} berhasil di-ACC!\nNamun belum ada grup slot *${slotAcc}* yang terdaftar.\nTambahkan dulu dengan: *.addgrub [nama] ${slotAcc}*`, { mentions: [userJid] });
 } else {
+let _hasAvailable = false;
 let listTeksAcc = `✅ Pendaftaran @${userJid.split('@')[0]} berhasil di-ACC!\nSlot: *${slotAcc}* | A.n: *${data.name}*\n\n*Pilih Grup untuk dimasukkan:*\n\n`;
 grupsSlotAcc.forEach((g, i) => {
 const _jc = (g.joined || g.participants || []).length;
 const _pc = (g.pendingJoin || []).length;
 const _tc = _jc + _pc;
 const isFull = _tc >= 4;
-let slotInfo = `${_tc}/4`;
-if (_pc > 0) slotInfo += ` (✅${_jc} ⏳${_pc})`;
-listTeksAcc += `*${i + 1}.* ${g.name} — ${slotInfo}${isFull ? ' *(FULL)*' : ''}\n`;
+if (!isFull) _hasAvailable = true;
+let slotInfo;
+if (_jc >= 4) slotInfo = `${_tc}/4 🔴 FULL`;
+else if (isFull && _pc > 0) slotInfo = `${_tc}/4 🟠 FULL (⏳${_pc} pending)`;
+else if (_tc === 3) slotInfo = `${_tc}/4 🟡 1 slot tersisa`;
+else slotInfo = `${_tc}/4 🟢`;
+if (_pc > 0 && !isFull) slotInfo += ` (✅${_jc} ⏳${_pc})`;
+listTeksAcc += `*${i + 1}.* ${g.name} — ${slotInfo}${isFull ? ' _(tidak bisa dipilih)_' : ''}\n`;
 });
-listTeksAcc += '\nReply pesan ini dengan *nomor* pilihanmu.';
+if (!_hasAvailable) {
+  listTeksAcc += '\n⚠️ *Semua grup slot ini sudah penuh!*\nTambah grup baru dengan *.addgrub*.';
+} else {
+  listTeksAcc += '\nReply pesan ini dengan *nomor* grup yang masih tersedia.';
+}
 const _sentList = await naze.sendMessage(m.chat, { text: listTeksAcc, mentions: [userJid] });
 applySession[m.sender] = {
 senderJid: userJid,
@@ -780,21 +792,27 @@ listMsgId: _sentList?.key?.id || null,
 Tambahkan dulu dengan: *.addgrub [nama] ${slot}* (jalankan di dalam grup)`);
 				return;
 			}
-			let listTeks = `*Pilih Grup untuk Slot ${slot}:*
-Pendaftar: @${applyData.senderJid.split('@')[0]} (A.n: ${applyData.name})
-
-`;
+			let _applyHasAvail = false;
+			let listTeks = `*Pilih Grup untuk Slot ${slot}:*\nPendaftar: @${applyData.senderJid.split('@')[0]} (A.n: ${applyData.name})\n\n`;
 			grupsSlot.forEach((g, i) => {
 				const _jc = (g.joined || g.participants || []).length;
 				const _pc = (g.pendingJoin || []).length;
 				const _tc = _jc + _pc;
 				const isFull = _tc >= 4;
-				let slotInfo = `${_tc}/4`;
-				if (_pc > 0) slotInfo += ` (✅${_jc} ⏳${_pc})`;
-				listTeks += `*${i + 1}.* ${g.name} — ${slotInfo}${isFull ? ' *(FULL)*' : ''}
-`;
+				if (!isFull) _applyHasAvail = true;
+				let slotInfo;
+				if (_jc >= 4) slotInfo = `${_tc}/4 🔴 FULL`;
+				else if (isFull && _pc > 0) slotInfo = `${_tc}/4 🟠 FULL (⏳${_pc} pending)`;
+				else if (_tc === 3) slotInfo = `${_tc}/4 🟡 1 slot tersisa`;
+				else slotInfo = `${_tc}/4 🟢`;
+				if (_pc > 0 && !isFull) slotInfo += ` (✅${_jc} ⏳${_pc})`;
+				listTeks += `*${i + 1}.* ${g.name} — ${slotInfo}${isFull ? ' _(tidak bisa dipilih)_' : ''}\n`;
 			});
-			listTeks += '\nReply pesan ini dengan *nomor* pilihanmu.';
+			if (!_applyHasAvail) {
+				listTeks += '\n⚠️ *Semua grup slot ini sudah penuh!*\nTambah grup baru dengan *.addgrub*.';
+			} else {
+				listTeks += '\nReply pesan ini dengan *nomor* grup yang masih tersedia.';
+			}
 			const sentList = await naze.sendMessage(m.chat, { text: listTeks, mentions: [applyData.senderJid] });
 			applySession[m.sender] = {
 				senderJid: applyData.senderJid,
@@ -854,9 +872,12 @@ try {
 		const _invCode = await naze.groupInviteCode(grup.jid);
 		const _grpMeta = await naze.groupMetadata(grup.jid).catch(() => ({ subject: grup.name, id: grup.jid }));
 		let _invSent = false;
-		// Ambil foto profil grup sebagai thumbnail (opsional)
+		// Ambil foto profil grup sebagai Buffer (bukan URL — supaya jpegThumbnail valid)
 		let _grpThumb = null;
-		try { _grpThumb = await naze.profilePictureUrl(grup.jid, 'image'); } catch (_) {}
+		try {
+			const _thumbUrl = await naze.profilePictureUrl(grup.jid, 'image').catch(() => null);
+			if (_thumbUrl) _grpThumb = await getBuffer(_thumbUrl).catch(() => null);
+		} catch (_) {}
 		// Kirim sebagai kartu undangan grup
 		try {
 			const _invPayload = {
@@ -867,21 +888,47 @@ try {
 				caption: `✅ Kamu telah diterima! Klik *Join Group* untuk masuk ke grup turnamen slot *${sesiApply.pilihan}*.\n\n⚠️ Berlaku *20 menit* — segera klik!`
 			};
 			if (_grpThumb) _invPayload.jpegThumbnail = _grpThumb;
-			await naze.sendMessage(sesiApply.senderJid, {
-				groupInviteMessage: _invPayload
-			})
+			await naze.sendMessage(sesiApply.senderJid, { groupInviteMessage: _invPayload });
 			_invSent = true;
 		} catch (_eCard) {
-			// Link teks dihapus - hanya gunakan kartu undangan grup
-			// Jika kartu gagal, laporkan ke admin dan hentikan proses
-			await m.reply(`❌ Gagal kirim kartu undangan ke @${sesiApply.senderJid.split('@')[0]}.\nError: ${_eCard?.message || _eCard}\n\nPastikan:\n1. Nomor bot disimpan peserta\n2. Bot adalah admin grup *${grup.name}*\n3. Coba lagi atau tambahkan manual`, { mentions: [sesiApply.senderJid] });
-			// _invSent tetap false, proses tidak dilanjutkan
+			// Kartu undangan gagal — minta user simpan nomor bot dulu
+			const _botNumSv = naze.user?.id?.split(':')[0] || naze.user?.id?.split('@')[0] || 'bot';
+			// Inisialisasi pendingSaveBot jika belum ada
+			if (!db.game.pendingSaveBot) db.game.pendingSaveBot = {};
+			// Hanya buat state baru jika belum ada / sudah habis
+			const _psbExist = db.game.pendingSaveBot[sesiApply.senderJid];
+			if (!_psbExist || _psbExist.used || Date.now() >= _psbExist.expireAt) {
+				const _psbExpire = Date.now() + 5 * 60 * 1000;
+				db.game.pendingSaveBot[sesiApply.senderJid] = {
+					grupJid: grup.jid,
+					grupIdx,
+					grupName: grup.name,
+					pilihan: sesiApply.pilihan,
+					name: sesiApply.name,
+					inviteCode: _invCode,
+					expireAt: _psbExpire,
+					used: false,
+					saveMsgId: null
+				};
+				// Auto-cleanup setelah 5 menit
+				setTimeout(() => {
+					const _s = db.game.pendingSaveBot?.[sesiApply.senderJid];
+					if (_s && Date.now() >= _s.expireAt) delete db.game.pendingSaveBot[sesiApply.senderJid];
+				}, 5 * 60 * 1000);
+				// Kirim pesan minta save ke user
+				const _svMsg = await naze.sendMessage(sesiApply.senderJid, {
+					text: `━━━━━━━━━━━━━━━━━━━━━\n🏆 *PENDAFTARAN TURNAMEN*\n━━━━━━━━━━━━━━━━━━━━━\n\n✅ Pendaftaran kamu sudah di-ACC oleh admin!\n\n⚠️ *Satu langkah lagi sebelum masuk grup:*\n\nBot tidak bisa langsung memasukkan kamu karena nomor bot belum disimpan di kontakmu.\n\n📱 *Simpan nomor ini sekarang:*\n*+${_botNumSv}*\n\nSetelah disimpan, *reply pesan ini* dengan:\n*sudah*\n\n⏰ Kamu punya *5 menit* untuk konfirmasi.\nJika tidak dikonfirmasi, hubungi admin untuk proses ulang.\n━━━━━━━━━━━━━━━━━━━━━`
+				}).catch(() => null);
+				if (_svMsg?.key?.id) db.game.pendingSaveBot[sesiApply.senderJid].saveMsgId = _svMsg.key.id;
+				_invSent = true; // slot tetap direservasi
+				// Notif ke admin
+				await m.reply(`⏳ Kartu undangan gagal dikirim ke @${sesiApply.senderJid.split('@')[0]}.\n\n📱 *Bot sudah minta mereka simpan nomor bot.*\nSlot direservasi *5 menit* sambil menunggu konfirmasi.\n\nGrup: *${grup.name}* | Slot: *${sesiApply.pilihan}*\n_Jika 5 menit tidak konfirmasi, slot otomatis bebas kembali._`, { mentions: [sesiApply.senderJid] });
+			} else {
+				// Sudah ada state aktif — tidak buat duplikat
+				await m.reply(`⚠️ @${sesiApply.senderJid.split('@')[0]} sudah ada permintaan simpan nomor yang aktif.\nMenunggu mereka konfirmasi atau tunggu 5 menit.`, { mentions: [sesiApply.senderJid] });
+			}
 		}
-		if (_invSent) {
-			const _errNote = _eAdd?.isPrivacy ? 'nomor bot belum disave' : `gagal direct-add`;
-			await m.reply(`⚠️ @${sesiApply.senderJid.split('@')[0]} tidak bisa langsung ditambahkan (${_errNote}).\n\n✅ *Undangan sudah dikirim ke DM mereka.*\nGrup: *${grup.name}* | Slot: *${sesiApply.pilihan}*\n\n⏳ Peserta punya *20 menit* untuk klik undangan.\n_3 pesan otomatis hanya terkirim saat semua 4 orang benar-benar join._`, { mentions: [sesiApply.senderJid] });
-			_wasInvited = true;
-		}
+		if (_invSent) _wasInvited = true;
 	} catch (_eInv) {
 		// Bahkan groupInviteCode gagal (bot bukan admin grup?)
 		await m.reply(`❌ Gagal add & gagal buat undangan.\n*Pastikan bot adalah admin grup ${grup.name}!*\nError: ${_eAdd?.message || _eAdd}\nInvite error: ${_eInv?.message || _eInv}`);
@@ -978,6 +1025,71 @@ if (_wasAdded) {
 		if (!m.isGroup && !m.key.fromMe && m.key.remoteJid !== 'status@broadcast') {
 			const bodyTrim = (body || '').trim();
 			const bodyLower = bodyTrim.toLowerCase();
+
+			// ── Handler "sudah" — konfirmasi simpan nomor bot ──
+			if (!db.game.pendingSaveBot) db.game.pendingSaveBot = {};
+			const _psbState = db.game.pendingSaveBot[m.sender];
+			if (
+				_psbState &&
+				!_psbState.used &&
+				Date.now() < _psbState.expireAt &&
+				/^sudah$/i.test(bodyLower) &&
+				m.quoted?.id && m.quoted.id === _psbState.saveMsgId
+			) {
+				_psbState.used = true; // 1x percobaan saja, langsung tandai
+				try {
+					// Ambil invite code baru (lebih segar)
+					const _rInvCode = await naze.groupInviteCode(_psbState.grupJid).catch(() => _psbState.inviteCode);
+					const _rMeta = await naze.groupMetadata(_psbState.grupJid).catch(() => ({ subject: _psbState.grupName }));
+					let _rThumb = null;
+					try {
+						const _rThumbUrl = await naze.profilePictureUrl(_psbState.grupJid, 'image').catch(() => null);
+						if (_rThumbUrl) _rThumb = await getBuffer(_rThumbUrl).catch(() => null);
+					} catch (_) {}
+					const _rPayload = {
+						inviteCode: _rInvCode,
+						inviteExpiration: Math.floor(Date.now() / 1000) + 1200,
+						groupJid: _psbState.grupJid,
+						groupName: _rMeta.subject || _psbState.grupName,
+						caption: `✅ Terima kasih sudah menyimpan nomor bot!\n\nKlik *Join Group* untuk masuk ke grup turnamen slot *${_psbState.pilihan}*.\n\n⚠️ Berlaku *20 menit* — segera klik!`
+					};
+					if (_rThumb) _rPayload.jpegThumbnail = _rThumb;
+					await naze.sendMessage(m.sender, { groupInviteMessage: _rPayload });
+					// Notif ke grup monitor
+					if (set.monitorGroup) {
+						await naze.sendMessage(set.monitorGroup, {
+							text: `✅ *@${m.sender.split('@')[0]} sudah simpan nomor bot!*\nKartu undangan berhasil dikirim ulang.\nGrup: *${_psbState.grupName}* | Slot: *${_psbState.pilihan}*`,
+							mentions: [m.sender]
+						}).catch(() => {});
+					}
+					// Pastikan slot masih reserved (tambah ke pendingJoin jika belum)
+					const _rGi = set.tournamentGroups?.findIndex(g => g.jid === _psbState.grupJid);
+					if (_rGi >= 0) {
+						if (!set.tournamentGroups[_rGi].pendingJoin) set.tournamentGroups[_rGi].pendingJoin = [];
+						const alreadyPending = set.tournamentGroups[_rGi].pendingJoin.some(p => p.senderJid === m.sender);
+						if (!alreadyPending) {
+							const _rExpireAt = Date.now() + 20 * 60 * 1000;
+							set.tournamentGroups[_rGi].pendingJoin.push({ senderJid: m.sender, invitedAt: Date.now(), expireAt: _rExpireAt });
+							set.tournamentGroups[_rGi].count = (set.tournamentGroups[_rGi].joined?.length || 0) + set.tournamentGroups[_rGi].pendingJoin.length;
+						}
+					}
+				} catch (_rErr) {
+					// Kartu undangan tetap gagal
+					await naze.sendMessage(m.sender, {
+						text: `❌ Maaf, kartu undangan masih gagal dikirim.\nHubungi admin untuk dimasukkan secara manual.`
+					}).catch(() => {});
+					if (set.monitorGroup) {
+						await naze.sendMessage(set.monitorGroup, {
+							text: `❌ Kartu undangan tetap gagal ke @${m.sender.split('@')[0]} meski sudah sv nomor.\nGrup: *${_psbState.grupName}* | Slot: *${_psbState.pilihan}*\nTambahkan manual.`,
+							mentions: [m.sender]
+						}).catch(() => {});
+					}
+				}
+				delete db.game.pendingSaveBot[m.sender];
+				return;
+			}
+			// Jika reply ke save-msg tapi bukan "sudah" — atau sudah dipakai / expired — abaikan saja
+			if (_psbState && m.quoted?.id === _psbState.saveMsgId) return;
 
 			// Trigger kata kunci "daftar"
 			if (bodyLower === 'daftar' && !m.prefix) {
@@ -1235,27 +1347,41 @@ if (_wasAdded) {
 				if (!isCreator) return m.reply(global.mess.owner);
 				if (!set.tournamentGroups || set.tournamentGroups.length === 0) return m.reply('Belum ada grup turnamen yang terdaftar.\nTambahkan dengan: *.addgrub [nama] [slot]*');
 				const bySlot = { '11': [], '33': [], '44': [] };
+				const _now = Date.now();
 				set.tournamentGroups.forEach((g, i) => {
+					// Bersihkan pending yang expired sebelum hitung
+					if (g.pendingJoin) g.pendingJoin = g.pendingJoin.filter(p => p.expireAt > _now);
 					const _joined = (g.joined || g.participants || []).length;
 					const _pending = (g.pendingJoin || []).length;
 					const _total = _joined + _pending;
-					const isFull = _total >= 4;
-					const allJoined = _joined >= 4;
+					// Sync count field
+					g.count = _total;
 					let statusLine = '';
-					if (allJoined) statusLine = ' *[FULL - Semua join]*';
-					else if (isFull && _pending > 0) statusLine = ' *[FULL - ada pending]*';
-					else if (_total === 3) statusLine = ' ⚠️';
-					let line = `${i + 1}. ${g.name} — ${_total}/4${statusLine}`;
-					if (_pending > 0) line += `\n   ✅ Joined: ${_joined} | ⏳ Pending: ${_pending}`;
+					if (_joined >= 4) statusLine = ' 🔴 *[FULL]*';
+					else if (_total >= 4 && _pending > 0) statusLine = ' 🟠 *[FULL - pending]*';
+					else if (_total === 3) statusLine = ' 🟡 *[1 slot tersisa]*';
+					else if (_total === 0) statusLine = ' 🟢 *[Kosong]*';
+					else statusLine = ` 🟢 *[${4 - _total} slot tersisa]*`;
+					let line = `*${i + 1}.* ${g.name} — ${_total}/4${statusLine}`;
+					if (_pending > 0) line += `\n    ✅ Join: ${_joined} | ⏳ Pending invite: ${_pending}`;
+					const slotStatus = g.slot in (set.slotOpen || {}) ? (set.slotOpen[g.slot] ? '' : ' ⛔') : '';
+					line = line + slotStatus;
 					bySlot[g.slot]?.push(line);
 				});
-				let teks = '*📋 Daftar Grup Turnamen:*\n';
+				let teks = '╔══════════════════════╗\n║  📋 *DAFTAR GRUP TURNAMEN*  ║\n╚══════════════════════╝\n';
+				const slotStatusText = { '11': '', '33': '', '44': '' };
+				for (const s of ['11','33','44']) {
+					slotStatusText[s] = set.slotOpen?.[s] === false ? ' ⛔ *DITUTUP*' : '';
+				}
 				for (const slot of ['11', '33', '44']) {
+					teks += `\n*[ Slot ${slot}${slotStatusText[slot]} ]*\n`;
 					if (bySlot[slot].length > 0) {
-						teks += `\n*Slot ${slot}:*\n` + bySlot[slot].join('\n') + '\n';
+						teks += bySlot[slot].join('\n') + '\n';
+					} else {
+						teks += '_Belum ada grup_\n';
 					}
 				}
-				teks += '\n⚠️ = tinggal 1 slot | *(FULL)* = penuh';
+				teks += '\n🟢 = tersedia | 🟡 = hampir penuh | 🟠 = pending | 🔴 = penuh | ⛔ = slot ditutup';
 				await m.reply(teks);
 			}
 			break

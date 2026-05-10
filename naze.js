@@ -750,12 +750,29 @@ listMsgId: _sentList?.key?.id || null,
 };
 }
 				} else {
-					const alasanTolak = body.trim().replace(/^tolak\s*/i, '').trim();
-					const pesanTolak = alasanTolak
-						? `❌ *Pendaftaran Turnamen Ditolak*\nSlot: *${data.pilihan}*\n\nAlasan: ${alasanTolak}\n\nSilahkan ketik *daftar* lagi dan kirim bukti yang benar.`
-						: `❌ *Pendaftaran Turnamen Ditolak*\nSlot: *${data.pilihan}*\n\nBukti transfer tidak valid atau bermasalah.\nSilahkan ketik *daftar* lagi dan kirim bukti yang benar.`;
+					const _tolakRaw = body.trim().replace(/^tolak\s*/i, '').trim();
+					// Cek apakah ada flag blacklist: "tolak blacklist [alasan]" atau "tolak bl [alasan]"
+					const _isBlacklist = /^(blacklist|bl)\b/i.test(_tolakRaw);
+					const alasanTolak = _isBlacklist ? _tolakRaw.replace(/^(blacklist|bl)\s*/i, '').trim() : _tolakRaw;
+					// Inisialisasi blacklist tournament jika belum ada
+					if (!set.tournamentBlacklist) set.tournamentBlacklist = {};
+					if (_isBlacklist) {
+						set.tournamentBlacklist[userJid] = {
+							name: data.name,
+							alasan: alasanTolak || 'Tidak ada alasan',
+							tanggal: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
+						};
+					}
+					const pesanTolak = _isBlacklist
+						? `🚫 *Pendaftaran Turnamen Ditolak & Diblacklist*\nSlot: *${data.pilihan}*${alasanTolak ? '\n\nAlasan: ' + alasanTolak : ''}\n\nKamu tidak bisa mendaftar turnamen ini lagi.\nHubungi admin jika ada pertanyaan.`
+						: alasanTolak
+							? `❌ *Pendaftaran Turnamen Ditolak*\nSlot: *${data.pilihan}*\n\nAlasan: ${alasanTolak}\n\nSilahkan ketik *daftar* lagi dan kirim bukti yang benar.`
+							: `❌ *Pendaftaran Turnamen Ditolak*\nSlot: *${data.pilihan}*\n\nBukti transfer tidak valid atau bermasalah.\nSilahkan ketik *daftar* lagi dan kirim bukti yang benar.`;
 					await naze.sendMessage(userJid, { text: pesanTolak });
-					await m.reply(`❌ Pendaftaran @${userJid.split('@')[0]} ditolak.\nUser sudah diberitahu.`, { mentions: [userJid] });
+					const _tolakNotif = _isBlacklist
+						? `🚫 @${userJid.split('@')[0]} *ditolak & diblacklist*.\nAlasan: ${alasanTolak || '-'}\nUser sudah diberitahu.`
+						: `❌ Pendaftaran @${userJid.split('@')[0]} ditolak.\nUser sudah diberitahu.`;
+					await m.reply(_tolakNotif, { mentions: [userJid] });
 					// Setelah TOLAK → clear active proof dan tampilkan antrian berikutnya
 					db.game.activeProof = null;
 					if (proofQueue.length > 0) {
@@ -1102,6 +1119,14 @@ if (_wasAdded) {
 
 			// Trigger kata kunci "daftar"
 			if (bodyLower === 'daftar' && !m.prefix) {
+				// Cek blacklist tournament
+				if (!set.tournamentBlacklist) set.tournamentBlacklist = {};
+				const _blData = set.tournamentBlacklist[m.sender];
+				if (_blData) {
+					return await naze.sendMessage(m.sender, {
+						text: `🚫 *Kamu tidak bisa mendaftar turnamen ini.*\n\nNomor kamu telah diblacklist oleh admin.${_blData.alasan ? '\nAlasan: ' + _blData.alasan : ''}\n\nHubungi admin jika ada pertanyaan.`
+					});
+				}
 				// [3] Anti duplikat - cek apakah sudah ada sesi aktif
 				if (tournament[m.sender]) {
 					const state = tournament[m.sender].state;
@@ -1395,6 +1420,36 @@ if (_wasAdded) {
 			}
 			break
 
+			// Daftar Blacklist Turnamen
+			case 'listbl': {
+				if (!isCreator) return m.reply(global.mess.owner);
+				if (!set.tournamentBlacklist || Object.keys(set.tournamentBlacklist).length === 0) {
+					return m.reply('✅ Blacklist turnamen masih kosong.');
+				}
+				let blTeks = '╔══════════════════════╗\n║  🚫 *BLACKLIST TURNAMEN*  ║\n╚══════════════════════╝\n\n';
+				Object.entries(set.tournamentBlacklist).forEach(([jid, data], i) => {
+					blTeks += `*${i + 1}.* @${jid.split('@')[0]} (${data.name || '-'})\n`;
+					blTeks += `   Alasan: ${data.alasan || '-'}\n`;
+					blTeks += `   Tanggal: ${data.tanggal || '-'}\n\n`;
+				});
+				blTeks += `_Total: ${Object.keys(set.tournamentBlacklist).length} nomor_\n_Gunakan *.unbl [nomor]* untuk hapus dari blacklist_`;
+				const blMentions = Object.keys(set.tournamentBlacklist);
+				await m.reply(blTeks, { mentions: blMentions });
+				break;
+			}
+			// Hapus dari Blacklist Turnamen
+			case 'unbl': {
+				if (!isCreator) return m.reply(global.mess.owner);
+				const _unblNum = (args[0] || '').replace(/[^0-9]/g, '');
+				if (!_unblNum) return m.reply('Format: *.unbl [nomor]*\nContoh: *.unbl 628123456789*');
+				const _unblJid = _unblNum + '@s.whatsapp.net';
+				if (!set.tournamentBlacklist) set.tournamentBlacklist = {};
+				if (!set.tournamentBlacklist[_unblJid]) return m.reply(`❌ Nomor *${_unblNum}* tidak ada di blacklist.`);
+				const _unblName = set.tournamentBlacklist[_unblJid].name;
+				delete set.tournamentBlacklist[_unblJid];
+				await m.reply(`✅ @${_unblNum} (${_unblName || '-'}) berhasil dihapus dari blacklist.\nMereka bisa mendaftar kembali.`, { mentions: [_unblJid] });
+				break;
+			}
 			// Hapus grup turnamen
 			case 'delgrub': {
 				if (!isCreator) return m.reply(global.mess.owner);
@@ -1461,9 +1516,26 @@ kickedCount++;
 await sleep(700);
 } catch (e) {}
 }
+// Reset SEMUA field slot di db supaya benar-benar 0/4
 set.tournamentGroups[grupTerIdx].count = 0;
 set.tournamentGroups[grupTerIdx].participants = [];
-await m.reply(`✅ Grup *${grupTer.name}* berhasil direset. ${kickedCount} peserta telah dikick. Slot kembali ke 0/4`);
+set.tournamentGroups[grupTerIdx].joined = [];
+set.tournamentGroups[grupTerIdx].pendingJoin = [];
+
+// Hapus semua pendingJoinTimers yang terkait grup ini
+for (const _tk of Object.keys(global.pendingJoinTimers || {})) {
+  if (_tk.startsWith(m.chat + ':')) {
+    clearTimeout(global.pendingJoinTimers[_tk]);
+    delete global.pendingJoinTimers[_tk];
+  }
+}
+
+// Hapus semua pendingSaveBot yang terkait grup ini
+for (const [_sJid, _sData] of Object.entries(db.game.pendingSaveBot || {})) {
+  if (_sData?.grupJid === m.chat) delete db.game.pendingSaveBot[_sJid];
+}
+
+await m.reply(`✅ Grup *${grupTer.name}* berhasil direset sepenuhnya!\n${kickedCount} peserta dikick.\nSlot: *0/4* — joined, pending, & timer semua dibersihkan.`);
 } catch (e) {
 await m.reply('❌ Gagal mereset grup: ' + e.message);
 }
@@ -1477,7 +1549,7 @@ if (!m.isGroup) return m.reply('Perintah ini hanya bisa digunakan di dalam grup!
 if (m.chat !== set.monitorGroup) return m.reply('Perintah ini hanya bisa digunakan di grup *Monitor*!\nSet dulu dengan: *.monitor*');
 const helpText = `╔════════════════════╗\n║   *🏆 HELP TURNAMEN*   ║\n╚════════════════════╝\n\n*📌 Manajemen Grup:*\n✦ *.addgrub [nama] [slot]* — Daftarkan grup turnamen (jalankan di dalam grup)\n❖ *.close daftar* / *.open daftar* (atau *.tutup* / *.buka*) — Tutup/buka pendaftaran turnamen
 ❖ *.close [11/33/44]* / *.open [11/33/44]* — Tutup/buka slot tertentu
-❖ *.listgrub* — Lihat semua grup terdaftar beserta status slot\n✦ *.delgrub [nomor]* — Hapus grup dari daftar\n✦ *.resettur* — Kick peserta biasa & reset slot ke 0/4 (jalankan di grup)\n\n*📌 Manajemen Pendaftaran:*\n✦ *.monitor* — Jadikan grup ini sebagai monitor group\n✦ *.pending* — Lihat status antrian bukti transfer (aktif & menunggu)
+❖ *.listgrub* — Lihat semua grup terdaftar beserta status slot\n✦ *.delgrub [nomor]* — Hapus grup dari daftar\n✦ *.listbl* — Lihat daftar nomor blacklist turnamen\n✦ *.unbl [nomor]* — Hapus nomor dari blacklist\n✦ *.resettur* — Kick peserta biasa & reset slot ke 0/4 (jalankan di grup)\n\n*📌 Manajemen Pendaftaran:*\n✦ *.monitor* — Jadikan grup ini sebagai monitor group\n✦ *.pending* — Lihat status antrian bukti transfer (aktif & menunggu)
 ✦ _Pilih grup: reply ke pesan daftar grup yang dikirim bot dengan nomor_\n✦ *.setapikey [key]* — Ganti API key bot\n\n*📌 Utilitas:*\n✦ *.helptur* — Tampilkan menu ini (hanya di grup monitor)\n✦ *.testur* — Simulasi grup penuh & kirim 3 pesan tes (jalankan di dalam grup turnamen)\n\n📋 Semua command *khusus owner* & sebagian hanya di grup yang relevan.`;
 await m.reply(helpText);
 }

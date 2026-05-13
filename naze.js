@@ -40,6 +40,7 @@ import { GroupUpdate, LoadDataBase } from './src/message.js';
 import { JadiBot, StopJadiBot, ListJadiBot } from './src/jadibot.js';
 import { cmdAdd, cmdAddHit, addExpired, getPosition, getExpired, getStatus, checkStatus, getAllExpired, checkExpired } from './src/database.js';
 import { rdGame, iGame, tGame, gameSlot, gameCasinoSolo, gameSamgongSolo, gameMerampok, gameBegal, daily, buy, setLimit, addLimit, addMoney, setMoney, transfer, Blackjack, SnakeLadder } from './lib/game.js';
+import { createQrisOrder, checkOrderStatus, verifyMidtransSignature } from './src/midtrans.js';
 import { getRandom, getBuffer, fetchJson, runtime, clockString, sleep, isUrl, formatDate, formatp, generateProfilePicture, errorCache, normalize, runUpdate, updateSettings, parseMention, fixBytes, similarity, pickRandom, encodeToLetters, tarBackup } from './lib/function.js';
 
 const require = createRequire(import.meta.url);
@@ -106,6 +107,48 @@ const naze = async (naze, m, msg, store) => {
 	if (!set.tournamentGroups) set.tournamentGroups = [];
 	if (set.tournamentOpen === undefined) set.tournamentOpen = true;
 	if (!set.slotOpen) set.slotOpen = { '11': true, '33': true, '44': true };
+	// Mode pembayaran: 'manual' (default) | 'auto' (midtrans QRIS)
+	if (!set.paymentMode) set.paymentMode = 'manual';
+	if (!set.midtransKey) set.midtransKey = '';
+	if (!set.slotPrice) set.slotPrice = { '11': 10000, '33': 10000, '44': 10000 };
+	if (!db.game.autoPayOrders) db.game.autoPayOrders = {};
+
+	// ── Setup Midtrans Webhook Handler (dipasang sekali per koneksi) ─────────
+	if (!global._midtransHandlerSet) {
+		global._midtransHandlerSet = true;
+		global.midtransWebhookHandler = async ({ orderId, status, fraudStatus, grossAmount, signatureKey, statusCode }) => {
+			try {
+				// Verifikasi signature
+				if (set.midtransKey && signatureKey) {
+					const valid = verifyMidtransSignature({ orderId, statusCode: String(statusCode), grossAmount: String(grossAmount), serverKey: set.midtransKey, signatureKey });
+					if (!valid) { console.log('[Midtrans] Invalid signature for', orderId); return; }
+				}
+				const order = db.game.autoPayOrders?.[orderId];
+				if (!order) { console.log('[Midtrans] Order not found:', orderId); return; }
+				if (order.status !== 'pending') return; // sudah diproses
+				const isPaid = (status === 'settlement' || status === 'capture') && fraudStatus !== 'deny';
+				if (!isPaid) return;
+				order.status = 'paid';
+				// Proses join grup otomatis
+				const { autoPayProcessJoin } = await import('./naze.js');
+				const result = await autoPayProcessJoin({ naze, set, senderJid: order.senderJid, senderName: order.name, slot: order.pilihan, orderId });
+				// Bersihkan tournament state
+				if (global.db?.game?.tournament?.[order.senderJid]) delete global.db.game.tournament[order.senderJid];
+				if (global.tournamentTimers?.[order.senderJid]) { clearTimeout(global.tournamentTimers[order.senderJid]); delete global.tournamentTimers[order.senderJid]; }
+				// Notif monitor group
+				const _mGrp = set.monitorGroup;
+				if (_mGrp) {
+					const _hargaFmt = new Intl.NumberFormat('id-ID').format(Number(grossAmount));
+					const _notifTxt = result.ok
+						? `💰 *PEMBAYARAN OTOMATIS MASUK!*\n@${order.senderJid.split('@')[0]} (${order.name})\nSlot: *${order.pilihan}* | Rp ${_hargaFmt}\nGrup: *${result.grup?.name}* | Metode: ${result.method === 'direct' ? 'Langsung dimasukkan ✅' : 'Kartu undangan dikirim 📨'}`
+						: `⚠️ Pembayaran masuk tapi gagal proses: @${order.senderJid.split('@')[0]}\nError: ${result.reason}\nTangani manual.`;
+					await naze.sendMessage(_mGrp, { text: _notifTxt, mentions: [order.senderJid] }).catch(() => {});
+				}
+			} catch (err) {
+				console.error('[Midtrans Webhook Handler Error]', err);
+			}
+		};
+	}
 	if (!global.tournamentTimers) global.tournamentTimers = {};
 	if (!global.pendingJoinTimers) global.pendingJoinTimers = {};
 	// Migrasi & cleanup: pastikan setiap grup punya joined/pendingJoin, dan hapus invite expired
@@ -1164,6 +1207,59 @@ if (_wasAdded) {
 					tournament[m.sender].name = null;
 					tournament[m.sender].time = Date.now();
 
+					// ── Mode Otomatis: generate QRIS via Midtrans ─────────────────────
+					if (set.paymentMode === 'auto' && set.midtransKey) {
+						try {
+							const _orderId = `TUR-${pilihan}-${m.sender.split('@')[0]}-${Date.now()}`;
+							const _amount = set.slotPrice?.[pilihan] || 10000;
+							const _qrisData = await createQrisOrder({
+								orderId: _orderId,
+								amount: _amount,
+								customerName: m.pushName || m.sender.split('@')[0],
+								serverKey: set.midtransKey
+							});
+							const _qrisUrl = _qrisData?.actions?.find(a => a.name === 'generate-qr-code')?.url
+								|| _qrisData?.qr_code_url;
+							if (!_qrisUrl) throw new Error('URL QRIS tidak ditemukan dari Midtrans');
+							// Download gambar QRIS dari URL
+							const _qrisBuf = await getBuffer(_qrisUrl);
+							// Simpan orderId di tournament state
+							tournament[m.sender].orderId = _orderId;
+							tournament[m.sender].state = 'waiting_auto_pay';
+							// Simpan juga di autoPayOrders untuk polling/webhook
+							db.game.autoPayOrders[_orderId] = {
+								senderJid: m.sender,
+								pilihan,
+								amount: _amount,
+								name: m.pushName || m.sender.split('@')[0],
+								createdAt: Date.now(),
+								expireAt: Date.now() + 15 * 60 * 1000,
+								status: 'pending'
+							};
+							// Kirim QRIS ke user
+							const _hargaFmt = new Intl.NumberFormat('id-ID').format(_amount);
+							await naze.sendMessage(m.chat, {
+								image: _qrisBuf,
+								caption: `🏆 *PEMBAYARAN OTOMATIS*\n\nScan QRIS di atas untuk membayar *Slot ${pilihan}*.\n\n💰 Nominal: *Rp ${_hargaFmt}*\n🔖 Order ID: \`${_orderId}\`\n\n⏰ *Batas waktu: 15 menit*\nSetelah bayar, kamu akan *otomatis* dimasukkan ke grup — tidak perlu kirim bukti!`
+							});
+							// Jadwalkan expire
+							if (global.tournamentTimers[m.sender]) clearTimeout(global.tournamentTimers[m.sender]);
+							global.tournamentTimers[m.sender] = setTimeout(async () => {
+								const _ord = db.game.autoPayOrders?.[_orderId];
+								if (_ord && _ord.status === 'pending') {
+									_ord.status = 'expired';
+									if (tournament[m.sender]) delete tournament[m.sender];
+									await naze.sendMessage(m.sender, { text: `⏰ Waktu pembayaran habis!\nOrder ID: \`${_orderId}\`\nSilahkan ketik *daftar* lagi untuk membuat order baru.` }).catch(() => {});
+								}
+							}, 15 * 60 * 1000);
+							return;
+						} catch (_eQris) {
+							await m.reply(`❌ Gagal generate QRIS otomatis.\nError: ${_eQris?.message}\nBot beralih ke mode manual sementara.`);
+							// Fallthrough ke mode manual di bawah
+						}
+					}
+
+					// ── Mode Manual: kirim QRIS statis + minta bukti TF ──────────────
 					const qrisPath = path.join(__dirname, 'src/media/qris.jpg');
 					const contohPath = path.join(__dirname, 'src/media/contoh_tf.jpg');
 					await naze.sendMessage(m.chat, { image: fs.readFileSync(qrisPath), caption: `Silahkan transfer ke QRIS di atas untuk slot *${pilihan}*.` });
@@ -1420,6 +1516,50 @@ if (_wasAdded) {
 			}
 			break
 
+			// ── Set Mode Pembayaran ─────────────────────────────────────────────
+			case 'setmode': {
+				if (!isCreator) return m.reply(global.mess.owner);
+				const _mode = (args[0] || '').toLowerCase();
+				if (!['manual', 'auto'].includes(_mode)) return m.reply('Format: *.setmode manual* atau *.setmode auto*');
+				if (_mode === 'auto' && !set.midtransKey) return m.reply('⚠️ Set dulu Midtrans Server Key dengan:\n*.setmtkey server_key_kamu*');
+				set.paymentMode = _mode;
+				const _modeLabel = _mode === 'auto' ? '✅ *OTOMATIS* — QRIS Midtrans, peserta langsung masuk grup setelah bayar' : '🔧 *MANUAL* — Admin verifikasi bukti TF seperti biasa';
+				await m.reply(`Mode pembayaran diubah ke:\n${_modeLabel}`);
+				break;
+			}
+			// ── Set Harga Slot ────────────────────────────────────────────────────
+			case 'setharga': {
+				if (!isCreator) return m.reply(global.mess.owner);
+				const _shSlot = args[0];
+				const _shNom = parseInt(args[1]);
+				if (!['11','33','44'].includes(_shSlot) || isNaN(_shNom) || _shNom < 1000) return m.reply('Format: *.setharga [slot] [nominal]*\nContoh: *.setharga 11 15000*\nMinimal nominal: 1000');
+				if (!set.slotPrice) set.slotPrice = { '11': 10000, '33': 10000, '44': 10000 };
+				set.slotPrice[_shSlot] = _shNom;
+				const _shFmt = new Intl.NumberFormat('id-ID').format(_shNom);
+				await m.reply(`✅ Harga Slot *${_shSlot}* diset ke *Rp ${_shFmt}*`);
+				break;
+			}
+			// ── Set Midtrans Server Key ───────────────────────────────────────────
+			case 'setmtkey': {
+				if (!isCreator) return m.reply(global.mess.owner);
+				const _mtKey = args[0] || '';
+				if (!_mtKey || _mtKey.length < 10) return m.reply('Format: *.setmtkey [server_key]*\nContoh: *.setmtkey SB-Mid-server-xxxxxxxxx*');
+				set.midtransKey = _mtKey;
+				await m.reply(`✅ Midtrans Server Key berhasil disimpan.\nKey: ||${_mtKey.slice(0,8)}...${_mtKey.slice(-4)}||\n\nSekarang kamu bisa aktifkan mode otomatis dengan:\n*.setmode auto*`);
+				break;
+			}
+			// ── Info mode & harga saat ini ───────────────────────────────────────
+			case 'infomode': {
+				if (!isCreator) return m.reply(global.mess.owner);
+				const _imMode = set.paymentMode || 'manual';
+				const _imKey = set.midtransKey ? `✅ Key: ||${set.midtransKey.slice(0,8)}...${set.midtransKey.slice(-4)}||` : '⚠️ Belum diset';
+				const _im11 = new Intl.NumberFormat('id-ID').format(set.slotPrice?.['11'] || 10000);
+				const _im33 = new Intl.NumberFormat('id-ID').format(set.slotPrice?.['33'] || 10000);
+				const _im44 = new Intl.NumberFormat('id-ID').format(set.slotPrice?.['44'] || 10000);
+				const _pendingCount = Object.values(db.game.autoPayOrders || {}).filter(o => o.status === 'pending').length;
+				await m.reply(`╔══════════════════════╗\n║  ⚙️ *INFO PAYMENT MODE*  ║\n╚══════════════════════╝\n\n*Mode:* ${_imMode === 'auto' ? '✅ OTOMATIS (Midtrans)' : '🔧 MANUAL'}\n*Midtrans Key:* ${_imKey}\n\n*Harga Slot:*\n• Slot 11: Rp ${_im11}\n• Slot 33: Rp ${_im33}\n• Slot 44: Rp ${_im44}\n\n*Order auto pending:* ${_pendingCount}\n\n_Ubah: .setmode manual/auto_\n_Harga: .setharga [slot] [nominal]_\n_Key: .setmtkey [key]_`);
+				break;
+			}
 			// Daftar Blacklist Turnamen
 			case 'listbl': {
 				if (!isCreator) return m.reply(global.mess.owner);
@@ -5672,6 +5812,86 @@ Select Bot Settings:
 		} else m.reply('Error: ' + (e?.name || e?.code || e?.message || 'Terjadi kesalahan tidak diketahui') + '\nLog Error Telah dikirim ke Owner\n\n');
 		return naze.sendFromOwner(ownerNumber, `Halo sayang, sepertinya ada yang error nih, jangan lupa diperbaiki ya\n\nVersion : *${require('./package.json').version}*\nType : *${m.type || errorKey}*\n\n*Log error:*\n\n` + util.format(e), m, { contextInfo: { isForwarded: true }})
 	}
+}
+
+// ── Auto-pay helper: pilihkan grup terbaik (paling banyak isi, belum full) ──
+export async function autoPayGetBestGroup(set, slot) {
+  const now = Date.now();
+  const grupsSlot = (set.tournamentGroups || []).filter(g => g.slot === slot);
+  if (!grupsSlot.length) return null;
+  // Bersihkan pending expired
+  for (const g of grupsSlot) {
+    if (g.pendingJoin) g.pendingJoin = g.pendingJoin.filter(p => p.expireAt > now);
+  }
+  // Filter yang belum full
+  const available = grupsSlot.filter(g => {
+    const total = (g.joined?.length || 0) + (g.pendingJoin?.length || 0);
+    return total < 4;
+  });
+  if (!available.length) return null;
+  // Pilih yang paling banyak isinya (greedy fill)
+  available.sort((a, b) => {
+    const ta = (a.joined?.length || 0) + (a.pendingJoin?.length || 0);
+    const tb = (b.joined?.length || 0) + (b.pendingJoin?.length || 0);
+    return tb - ta;
+  });
+  return available[0];
+}
+
+// ── Auto-pay: proses peserta masuk grup setelah pembayaran terkonfirmasi ───
+export async function autoPayProcessJoin({ naze, set, senderJid, senderName, slot, orderId }) {
+  const grup = await autoPayGetBestGroup(set, slot);
+  if (!grup) return { ok: false, reason: 'Tidak ada grup tersedia untuk slot ' + slot };
+  const grupIdx = set.tournamentGroups.findIndex(g => g.jid === grup.jid);
+
+  // Step 1: Direct add
+  let wasAdded = false;
+  try {
+    const addRes = await naze.groupParticipantsUpdate(grup.jid, [senderJid], 'add');
+    const stat = addRes?.[0]?.status;
+    if (stat !== 403 && stat !== '403') wasAdded = true;
+  } catch (_) {}
+
+  if (wasAdded) {
+    // Update db
+    if (!set.tournamentGroups[grupIdx].joined) set.tournamentGroups[grupIdx].joined = [];
+    if (!set.tournamentGroups[grupIdx].joined.includes(senderJid)) {
+      set.tournamentGroups[grupIdx].joined.push(senderJid);
+      if (!set.tournamentGroups[grupIdx].participants) set.tournamentGroups[grupIdx].participants = [];
+      set.tournamentGroups[grupIdx].participants.push(senderJid);
+    }
+    set.tournamentGroups[grupIdx].pendingJoin = (set.tournamentGroups[grupIdx].pendingJoin || []).filter(p => p.senderJid !== senderJid);
+    set.tournamentGroups[grupIdx].count = set.tournamentGroups[grupIdx].joined.length + (set.tournamentGroups[grupIdx].pendingJoin?.length || 0);
+    return { ok: true, method: 'direct', grup };
+  }
+
+  // Step 2: Kirim kartu undangan
+  try {
+    const invCode = await naze.groupInviteCode(grup.jid);
+    const grpMeta = await naze.groupMetadata(grup.jid).catch(() => ({ subject: grup.name }));
+    let thumb = null;
+    try {
+      const thumbUrl = await naze.profilePictureUrl(grup.jid, 'image').catch(() => null);
+      if (thumbUrl) thumb = await getBuffer(thumbUrl).catch(() => null);
+    } catch (_) {}
+    const payload = {
+      inviteCode,
+      inviteExpiration: Math.floor(Date.now() / 1000) + 1200,
+      groupJid: grup.jid,
+      groupName: grpMeta.subject || grup.name,
+      caption: `✅ Pembayaran *Slot ${slot}* terkonfirmasi!\nKlik *Join Group* untuk masuk ke grup turnamen.\n\n⚠️ Berlaku *20 menit* — segera klik!`
+    };
+    if (thumb) payload.jpegThumbnail = thumb;
+    await naze.sendMessage(senderJid, { groupInviteMessage: payload });
+    // Reserve slot
+    if (!set.tournamentGroups[grupIdx].pendingJoin) set.tournamentGroups[grupIdx].pendingJoin = [];
+    const expireAt = Date.now() + 20 * 60 * 1000;
+    set.tournamentGroups[grupIdx].pendingJoin.push({ senderJid, invitedAt: Date.now(), expireAt });
+    set.tournamentGroups[grupIdx].count = (set.tournamentGroups[grupIdx].joined?.length || 0) + set.tournamentGroups[grupIdx].pendingJoin.length;
+    return { ok: true, method: 'invite', grup };
+  } catch (_eInv) {
+    return { ok: false, reason: 'Gagal kirim undangan: ' + (_eInv?.message || _eInv) };
+  }
 }
 
 export default naze;

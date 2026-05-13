@@ -39,4 +39,22 @@ app.all('/chat', (req, res) => {
 	res.json({ status: 200, mess: 'does not start' })
 });
 
+
+// ── Midtrans Webhook Endpoint ──────────────────────────────────────────────
+app.use('/midtrans/webhook', express.json());
+app.post('/midtrans/webhook', async (req, res) => {
+  try {
+    const notif = req.body;
+    const { order_id, transaction_status, fraud_status, gross_amount, signature_key, status_code } = notif;
+    // Forward ke handler global yang di-set oleh bot
+    if (typeof global.midtransWebhookHandler === 'function') {
+      await global.midtransWebhookHandler({ orderId: order_id, status: transaction_status, fraudStatus: fraud_status, grossAmount: gross_amount, signatureKey: signature_key, statusCode: status_code });
+    }
+    res.status(200).json({ status: 'OK' });
+  } catch (err) {
+    console.error('[Midtrans Webhook Error]', err.message);
+    res.status(500).json({ status: 'ERROR', message: err.message });
+  }
+});
+
 export { app, server, PORT };

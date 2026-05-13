@@ -351,6 +351,28 @@ async function startNazeBot() {
 					db.set[botNumber].join = true
 				}
 			}
+			// ── PM ke owner: pilih mode pembayaran ──────────────────────────────
+			setTimeout(async () => {
+				try {
+					const _pmSet = global.db?.set?.[botNumber];
+					if (!_pmSet) return;
+					const _curMode = _pmSet.paymentMode || 'manual';
+					const _midKey = _pmSet.midtransKey || '';
+					const _modeLabel = _curMode === 'auto' ? `✅ OTOMATIS (Midtrans)` : `🔧 MANUAL (verifikasi admin)`;
+					const _keyStatus = _midKey ? `✅ Midtrans key sudah diset` : `⚠️ Midtrans key belum diset`;
+					const _pm11 = new Intl.NumberFormat('id-ID').format(_pmSet.slotPrice?.['11'] || 10000);
+					const _pm33 = new Intl.NumberFormat('id-ID').format(_pmSet.slotPrice?.['33'] || 10000);
+					const _pm44 = new Intl.NumberFormat('id-ID').format(_pmSet.slotPrice?.['44'] || 10000);
+					for (const ownerId of global.owner) {
+						const ownerJid = ownerId + '@s.whatsapp.net';
+						await naze.sendMessage(ownerJid, {
+							text: `━━━━━━━━━━━━━━━━━━━━━\n🤖 *BOT TOURNAMENT ONLINE!*\n━━━━━━━━━━━━━━━━━━━━━\n\n📋 *Mode Pembayaran Saat Ini:*\n${_modeLabel}\n${_keyStatus}\n\n💰 *Harga Slot:*\n• Slot 11: Rp ${_pm11}\n• Slot 33: Rp ${_pm33}\n• Slot 44: Rp ${_pm44}\n\n*Pilih mode untuk sesi ini:*\n\n1️⃣  Ketik *.setmode manual* — Mode manual (admin verifikasi bukti TF)\n2️⃣  Ketik *.setmode auto* — Mode otomatis (QRIS Midtrans, langsung masuk grup)\n\n_Untuk set harga: .setharga [slot] [nominal]_\n_Contoh: .setharga 11 15000_\n_Untuk set Midtrans key: .setmtkey [server_key]_\n━━━━━━━━━━━━━━━━━━━━━`
+						}).catch(() => {});
+					}
+				} catch (_eStart) {
+					console.error('[Startup PM Error]', _eStart);
+				}
+			}, 5000); // delay 5 detik supaya koneksi stabil
 		}
 		if (qr) {
 			if (!pairingCode) qrcode.generate(qr, { small: true })
